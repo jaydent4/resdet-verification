@@ -1,4 +1,4 @@
-# Resdet/EO verification: TLA+ and Lean
+# Resdet/EO verification: TLA+, TLAPS, and Lean
 
 This repository contains a small, executable TLA+ model of the Resdet/EO
 protocol from *Cyclades: Taming Nested-Response Nondeterminism in Replicated
@@ -38,6 +38,26 @@ make check-lean     # proofs, concrete examples, and a strict axiom audit
 
 This is a separate local check; it does not launch, stop, or modify any TLC run.
 The existing `make check` and research profiles below remain TLA+-only.
+
+## TLAPS safety proof
+
+The paper's **Theorem 1 (Safety)** is also proved directly about
+`spec/Resdet.tla` with the TLA+ Proof System, with no bound on replicas,
+requests, responses, or log length. [What is proved and what is
+assumed](spec/TLAPS.md) lists the theorems, the `StrictDelivery` assumption
+(the mutant switches and the no-known-leader escape hatch are off), and the
+trust base. The same proof covers first-commit-wins, at-most-once delivery,
+prefix and race-winner agreement, response validity, and no-hole processing.
+Theorem 2 (liveness) is not proved with TLAPS.
+
+```sh
+make fetch-tlaps    # one-time project-local TLAPS installation
+make check-tlaps    # re-prove every obligation from scratch, plus an audit
+```
+
+This is also a separate local check that touches no TLC run. To make the
+specification acceptable to TLAPS, its three `RECURSIVE` folds are now
+recursive functions; `make check` reports the same state counts as before.
 
 ## Quick start
 
@@ -237,7 +257,11 @@ The paper's two headline theorems map directly to TLC checks:
 - **Theorem 1, Safety:** non-faulty Resdet replicas never deliver different
   responses for the same logical request. This is `ResponseAgreement`,
   strengthened by `AtMostOnceDelivery`, `PrefixAgreement`, and
-  `AppliedPrefixCorrect`.
+  `AppliedPrefixCorrect`. TLC checks these on the bounded configurations.
+  TLAPS proves `ResponseAgreement`, `AtMostOnceDelivery`, and
+  `PrefixAgreement` for unbounded parameters (`Theorem1` and `Safety` in
+  `spec/ResdetTheorems.tla`), and proves the replay form of
+  `AppliedPrefixCorrect` rather than the literal invariant.
 - **Theorem 2, Liveness:** every submitted logical request is eventually
   delivered at each non-faulty replica. This is `Completion` under
   `FairSpec`.
@@ -343,4 +367,5 @@ java -Xmx16g -jar ../tools/tla2tools.jar \
 TLC model checking is exhaustive only within the finite constants in the
 selected configuration. Passing these models is strong evidence for those
 bounds, not a machine-checked general theorem and not direct verification of
-the Go binary.
+the Go binary. The general statement of Theorem 1 for this specification is
+the TLAPS proof above; Theorem 2 has no TLAPS proof.

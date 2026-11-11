@@ -40,7 +40,7 @@ CONSTANTS
     MutantNoQuorum,
     MutantEarlyDelivery
 
-ASSUME
+ASSUME ConstantAssumptions ==
     /\ Replicas # {}
     /\ RequestIds # {}
     /\ Payloads # {}
@@ -105,11 +105,20 @@ HasVoted(replica, request) ==
 ObservedItem(request, responseValue) ==
     [rid |-> request, value |-> responseValue]
 
-RECURSIVE FlattenBatches(_)
+(***************************************************************************
+TLAPS rejects RECURSIVE operators, so the three folds in this module
+(FlattenBatches, ApplyItems, DedupFrom) are recursive functions over a
+prefix length instead. Each scans its sequence left to right, exactly as
+the Head/Tail recursion did. TLC evaluates these functions lazily; the
+TLAPS proofs unfold them with FiniteNatInductiveDef (ResdetFold.tla for
+ApplyItems, ResdetValidity.tla for FlattenBatches).
+***************************************************************************)
 FlattenBatches(batches) ==
-    IF Len(batches) = 0
-    THEN <<>>
-    ELSE Head(batches) \o FlattenBatches(Tail(batches))
+    LET flat[count \in 0..Len(batches)] ==
+            IF count = 0
+            THEN <<>>
+            ELSE flat[count - 1] \o batches[count]
+    IN flat[Len(batches)]
 
 DecidedRequestIds ==
     LET items == FlattenBatches(consensusLog)
@@ -136,34 +145,45 @@ EligibleProposalItems ==
         ELSE IF DecidedRequestIds = RequestIds THEN proposed ELSE {}
     ELSE proposed
 
-RECURSIVE ApplyItems(_, _, _)
-ApplyItems(items, alreadySeen, output) ==
-    IF Len(items) = 0
-    THEN [seen |-> alreadySeen, output |-> output]
-    ELSE
-        LET item == Head(items)
-            shouldApply == MutantNoDedup \/ item.rid \notin alreadySeen
-            nextSeen ==
-                IF shouldApply
-                THEN alreadySeen \union {item.rid}
-                ELSE alreadySeen
-            nextOutput ==
-                IF shouldApply
-                THEN Append(output, item)
-                ELSE output
-        IN ApplyItems(Tail(items), nextSeen, nextOutput)
+(***************************************************************************
+ApplyItem is one iteration of the pseudocode's process() loop body: the
+entry is delivered unless its request id is already in the delivery-
+deduplication state. ApplyItemsUpTo(...)[count] is the state after the
+first count entries of a batch.
+***************************************************************************)
+ApplyItem(state, item) ==
+    LET shouldApply == MutantNoDedup \/ item.rid \notin state.seen
+    IN [seen |->
+            IF shouldApply
+            THEN state.seen \union {item.rid}
+            ELSE state.seen,
+        output |->
+            IF shouldApply
+            THEN Append(state.output, item)
+            ELSE state.output]
 
-RECURSIVE DedupFrom(_, _)
+ApplyItemsUpTo(items, alreadySeen, output) ==
+    LET step[count \in 0..Len(items)] ==
+            IF count = 0
+            THEN [seen |-> alreadySeen, output |-> output]
+            ELSE ApplyItem(step[count - 1], items[count])
+    IN step
+
+ApplyItems(items, alreadySeen, output) ==
+    ApplyItemsUpTo(items, alreadySeen, output)[Len(items)]
+
+DedupItem(state, item) ==
+    IF item.rid \in state.seen
+    THEN state
+    ELSE [seen |-> state.seen \union {item.rid},
+          output |-> Append(state.output, item)]
+
 DedupFrom(items, alreadySeen) ==
-    IF Len(items) = 0
-    THEN <<>>
-    ELSE
-        LET item == Head(items)
-        IN IF item.rid \in alreadySeen
-           THEN DedupFrom(Tail(items), alreadySeen)
-           ELSE <<item>> \o DedupFrom(
-                                Tail(items),
-                                alreadySeen \union {item.rid})
+    LET step[count \in 0..Len(items)] ==
+            IF count = 0
+            THEN [seen |-> alreadySeen, output |-> <<>>]
+            ELSE DedupItem(step[count - 1], items[count])
+    IN step[Len(items)].output
 
 FlattenedPrefix(index) ==
     IF index = 0
