@@ -39,7 +39,7 @@ make check-lean     # proofs, concrete examples, and a strict axiom audit
 This is a separate local check; it does not launch, stop, or modify any TLC run.
 The existing `make check` and research profiles below remain TLA+-only.
 
-## TLAPS safety proof
+## TLAPS proofs
 
 The paper's **Theorem 1 (Safety)** is also proved directly about
 `spec/Resdet.tla` with the TLA+ Proof System, with no bound on replicas,
@@ -48,7 +48,12 @@ assumed](spec/TLAPS.md) lists the theorems, the `StrictDelivery` assumption
 (the mutant switches and the no-known-leader escape hatch are off), and the
 trust base. The same proof covers first-commit-wins, at-most-once delivery,
 prefix and race-winner agreement, response validity, and no-hole processing.
-Theorem 2 (liveness) is not proved with TLAPS.
+
+**Theorem 2 (Liveness)** is proved as `FairSpec => Completion` under
+`LivenessAssumptions`: no crashes, so the initial leader is stable; a
+bounded log with a slot for every request; finite replica and request sets.
+That is liveness of this model with a stable leader, not of the protocol
+under leader changes, which stays with the conditional Lean proofs.
 
 ```sh
 make fetch-tlaps    # one-time project-local TLAPS installation
@@ -264,7 +269,9 @@ The paper's two headline theorems map directly to TLC checks:
   `AppliedPrefixCorrect` rather than the literal invariant.
 - **Theorem 2, Liveness:** every submitted logical request is eventually
   delivered at each non-faulty replica. This is `Completion` under
-  `FairSpec`.
+  `FairSpec`. TLC checks it on `ResdetLiveness.cfg`, and TLAPS proves it for
+  unbounded finite parameters under `LivenessAssumptions` (`Theorem2` in
+  `spec/ResdetLiveness.tla`).
 
 The consensus assumptions CG1 (index agreement) and CG2 (prefix agreement)
 are represented by one immutable global consensus log. CG3 (consensus
@@ -367,5 +374,5 @@ java -Xmx16g -jar ../tools/tla2tools.jar \
 TLC model checking is exhaustive only within the finite constants in the
 selected configuration. Passing these models is strong evidence for those
 bounds, not a machine-checked general theorem and not direct verification of
-the Go binary. The general statement of Theorem 1 for this specification is
-the TLAPS proof above; Theorem 2 has no TLAPS proof.
+the Go binary. The general statements of Theorem 1, and of Theorem 2 under
+`LivenessAssumptions`, for this specification are the TLAPS proofs above.

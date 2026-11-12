@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Machine-check the TLAPS proofs of the paper's Theorem 1 (safety) and its
-# companions. Local only: this does not launch, stop, or modify any TLC run.
+# Machine-check the TLAPS proofs of the paper's Theorem 1 (safety) with its
+# companions and of Theorem 2 (liveness). Local only: this does not launch,
+# stop, or modify any TLC run.
 #
 # Every proof module is re-proved from scratch (no cached results) and must
 # report all obligations proved with no missing proof (tlapm --strict). An
@@ -21,6 +22,11 @@ MODULES=(
     ResdetPrefix
     ResdetValidity
     ResdetTheorems
+    ResdetLiveInv
+    ResdetLiveProgress
+    ResdetLiveEnabled
+    ResdetLiveTermination
+    ResdetLiveness
 )
 
 if [[ ! -x "$TLAPM" ]]; then
