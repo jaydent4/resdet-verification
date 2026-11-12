@@ -1,13 +1,21 @@
 -------------------------- MODULE ResdetLiveProgress --------------------------
 (***************************************************************************
-TLAPS liveness proof, part 2 of 5: a reachable state that is not Done can
-still take a step of some fair action.
+TLAPS liveness proof, part 2 of 5: in a reachable state with a leader and
+with the replicas of U up, if some replica in U has not yet delivered a
+response for every request, one of the enabling conditions holds.
 
 This is the state-level core of the paper's Lemmas 3-5 read backwards: if
-no fair action can step, then every replica has submitted every request,
-every request is selected, dispatched, answered, proposed and agreed, and
-every replica has learned and processed the whole log, so every replica
-has delivered a response for every request.
+none of the conditions holds, then every replica in U has submitted every
+request, every request is selected, dispatched by the current leader,
+answered, proposed and agreed, and every replica in U has learned and
+processed the whole log, so every replica in U has delivered a response
+for every request.
+
+The conditions mention only the current leader and the replicas in U. So
+the argument does not care what the other replicas do (they may be down,
+or crash and recover forever) or which replicas led earlier and what they
+dispatched and proposed: the current leader dispatches each selected
+request itself and proposes its own response.
 ***************************************************************************)
 EXTENDS ResdetLiveInv
 
@@ -31,23 +39,23 @@ LEMMA FullSubset ==
   BY <1>1, <1>3
 
 THEOREM Progress ==
-    ASSUME LivenessAssumptions
-    PROVE  LiveState /\ ~Done => CanStep
-<1> SUFFICES ASSUME LiveState, ~CanStep
-             PROVE  Done
+    ASSUME LivenessAssumptions, NEW U \in SUBSET Replicas
+    PROVE  LiveState /\ StableOn(U) /\ ~DoneOn(U) => CanStep(U)
+<1> SUFFICES ASSUME LiveState, StableOn(U), ~CanStep(U)
+             PROVE  DoneOn(U)
   OBVIOUS
 <1>inv. /\ LiveInv
         /\ ValidityInv
         /\ DeliveryInv
   BY DEF LiveState
-<1>can. /\ ~CanVote
-        /\ ~CanSelect
+<1>can. /\ ~CanVote(U)
+        /\ ~CanSelect(U)
         /\ ~CanDispatch
         /\ ~CanRespond
         /\ ~CanPropose
         /\ ~CanDecide
-        /\ ~CanLearn
-        /\ ~CanProcess
+        /\ ~CanLearn(U)
+        /\ ~CanProcess(U)
   BY DEF CanStep
 <1>ty. /\ leader \in Replicas
        /\ seen \in [Replicas -> SUBSET RequestIds]
@@ -62,26 +70,23 @@ THEOREM Progress ==
     BY <2>1
   <2>3. MaxSlots \in Nat
     BY ConstantAssumptions
+  <2>4. leader \in Replicas
+    BY <1>inv DEF LiveInv, StableOn
   <2> QED
-    BY <1>inv, <2>1, <2>2, <2>3 DEF LiveInv, ValidityInv, ValidityTypeOK
+    BY <1>inv, <2>1, <2>2, <2>3, <2>4
+       DEF LiveInv, ValidityInv, ValidityTypeOK
 
-(* 1. Every replica has submitted every request. *)
-<1>1. \A q \in RequestIds : AllVoted(q)
-  BY <1>can DEF CanVote, AllVoted
+(* 1. Every replica in U has submitted every request. *)
+<1>1. \A q \in RequestIds : \A r \in U : HasVoted(r, q)
+  BY <1>can DEF CanVote
 
 (* 2. Every request is selected. *)
 <1>2. \A q \in RequestIds : selected[q] # NoValue
   BY <1>can, <1>1 DEF CanSelect
 
-(* 3. The leader has dispatched every request. *)
+(* 3. The current leader has dispatched every request. *)
 <1>3. \A q \in RequestIds : leader \in dispatchers[q]
-  <2> TAKE q \in RequestIds
-  <2>1. dispatchers[q] # {}
-    BY <1>can, <1>2 DEF CanDispatch
-  <2>2. dispatchers[q] \subseteq {leader}
-    BY <1>inv DEF LiveInv, LeaderOnly
-  <2> QED
-    BY <2>1, <2>2
+  BY <1>can, <1>2 DEF CanDispatch
 
 (* 4. The leader has a response for every request. *)
 <1>4. \A q \in RequestIds : execResponse[q][leader] # NoValue
@@ -129,14 +134,14 @@ THEOREM Progress ==
   <2> QED
     BY <1>ty, <2>2, <2>3
 
-(* 7. Every replica has learned every agreed index. *)
-<1>7. \A r \in Replicas :
+(* 7. Every replica in U has learned every agreed index. *)
+<1>7. \A r \in U :
         \A s \in 1..Len(consensusLog) : s \in learned[r]
   BY <1>can DEF CanLearn
 
-(* 8. Every replica has processed the whole log. *)
-<1>8. \A r \in Replicas : processed[r] = Len(consensusLog)
-  <2> TAKE r \in Replicas
+(* 8. Every replica in U has processed the whole log. *)
+<1>8. \A r \in U : processed[r] = Len(consensusLog)
+  <2> TAKE r \in U
   <2>1. processed[r] \in Nat
     BY <1>ty
   <2>2. processed[r] <= Len(consensusLog)
@@ -154,9 +159,9 @@ THEOREM Progress ==
   <2> QED
     BY <1>ty, <2>1, <2>2, <2>3
 
-(* 9. So every replica has recorded every request id. *)
-<1>9. \A r \in Replicas : seen[r] = RequestIds
-  <2> TAKE r \in Replicas
+(* 9. So every replica in U has recorded every request id. *)
+<1>9. \A r \in U : seen[r] = RequestIds
+  <2> TAKE r \in U
   <2>1. seen[r] \in SUBSET RequestIds
     BY <1>ty
   <2>2. \A s \in 1..processed[r] :
@@ -181,5 +186,5 @@ THEOREM Progress ==
   <2> QED
     BY <2>1, <2>3
 <1> QED
-  BY <1>9 DEF Done
+  BY <1>9 DEF DoneOn
 =============================================================================

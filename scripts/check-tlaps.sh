@@ -22,6 +22,9 @@ MODULES=(
     ResdetPrefix
     ResdetValidity
     ResdetTheorems
+    ResdetRequests
+    ResdetApplied
+    ResdetComplete
     ResdetLiveInv
     ResdetLiveProgress
     ResdetLiveEnabled

@@ -1,13 +1,20 @@
 ------------------------- MODULE ResdetLiveTermination -------------------------
 (***************************************************************************
-TLAPS liveness proof, part 4 of 5: every behavior eventually stops
-changing.
+TLAPS liveness proof, part 4 of 5: the protocol's work eventually stops.
 
-Under LivenessAssumptions each step of Spec does one unit of work that is
-never undone (a vote, a selection, a dispatch, a response, a proposal, an
-agreed slot, a learned index, a processed index), and the total amount of
-work is bounded by the constants. So only finitely many steps change the
-state. This uses no fairness.
+Under LivenessAssumptions every step of Spec other than a crash, a
+recovery or an election does one unit of work that is never undone (a
+vote, a selection, a dispatch, a response, a proposal, an agreed slot, a
+learned index, a processed index), and the total amount of work is
+bounded by the constants. Crashes, recoveries and elections do no work
+and undo none; they change only leader and up. So only finitely many
+steps change WorkVars: from some point on, only leader and up change.
+This uses no fairness, and it holds however often replicas crash and
+leaders change.
+
+A new leader may dispatch a request that an earlier leader already
+dispatched, receive its own response, and propose it. Dispatches and
+proposals are therefore counted per (request, replica) pair.
 ***************************************************************************)
 EXTENDS ResdetLiveInv
 
@@ -22,9 +29,12 @@ PairRS == Replicas \X SlotSet
 
 VotedPairs == {p \in PairVR : HasVoted(p[1], p[2])}
 SelectedRids == {q \in RequestIds : selected[q] # NoValue}
-DispatchedRids == {q \in RequestIds : dispatchers[q] # {}}
+DispatchedPairs == {p \in PairQR : p[2] \in dispatchers[p[1]]}
 RespondedPairs == {p \in PairQR : execResponse[p[1]][p[2]] # NoValue}
-ProposedRids == {q \in RequestIds : \E item \in proposed : item.rid = q}
+ProposedPairs ==
+    {p \in PairQR :
+        /\ execResponse[p[1]][p[2]] # NoValue
+        /\ ObservedItem(p[1], execResponse[p[1]][p[2]]) \in proposed}
 UsedSlots == {s \in SlotSet : s <= Len(consensusLog)}
 LearnedPairs == {p \in PairRS : p[2] \in learned[p[1]]}
 ProcessedPairs == {p \in PairRS : p[2] <= processed[p[1]]}
@@ -34,13 +44,13 @@ Sum8(d1, d2, d3, d4, d5, d6, d7, d8) ==
     + Cardinality(d5) + Cardinality(d6) + Cardinality(d7) + Cardinality(d8)
 
 Work ==
-    Sum8(VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-         ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs)
+    Sum8(VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+         ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs)
 
 (* A constant: the most work any behavior can do. *)
 WorkBound ==
-    Sum8(PairVR, RequestIds, RequestIds, PairQR,
-         RequestIds, SlotSet, PairRS, PairRS)
+    Sum8(PairVR, RequestIds, PairQR, PairQR,
+         PairQR, SlotSet, PairRS, PairRS)
 
 Remaining == WorkBound - Work
 
@@ -226,33 +236,33 @@ LEMMA WorkBounded ==
   BY UniversesFinite
 <1>2. /\ VotedPairs \in SUBSET PairVR
       /\ SelectedRids \in SUBSET RequestIds
-      /\ DispatchedRids \in SUBSET RequestIds
+      /\ DispatchedPairs \in SUBSET PairQR
       /\ RespondedPairs \in SUBSET PairQR
-      /\ ProposedRids \in SUBSET RequestIds
+      /\ ProposedPairs \in SUBSET PairQR
       /\ UsedSlots \in SUBSET SlotSet
       /\ LearnedPairs \in SUBSET PairRS
       /\ ProcessedPairs \in SUBSET PairRS
-  BY DEF VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-         ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs
-<1> HIDE DEF VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-             ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs
+  BY DEF VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+         ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs
+<1> HIDE DEF VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+             ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs
 <1>3. /\ VotedPairs \subseteq PairVR
       /\ SelectedRids \subseteq RequestIds
-      /\ DispatchedRids \subseteq RequestIds
+      /\ DispatchedPairs \subseteq PairQR
       /\ RespondedPairs \subseteq PairQR
-      /\ ProposedRids \subseteq RequestIds
+      /\ ProposedPairs \subseteq PairQR
       /\ UsedSlots \subseteq SlotSet
       /\ LearnedPairs \subseteq PairRS
       /\ ProcessedPairs \subseteq PairRS
   BY <1>2
-<1>4. /\ Sum8(VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-              ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs) \in Nat
-      /\ Sum8(PairVR, RequestIds, RequestIds, PairQR,
-              RequestIds, SlotSet, PairRS, PairRS) \in Nat
-      /\ Sum8(VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-              ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs)
-           <= Sum8(PairVR, RequestIds, RequestIds, PairQR,
-                   RequestIds, SlotSet, PairRS, PairRS)
+<1>4. /\ Sum8(VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+              ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs) \in Nat
+      /\ Sum8(PairVR, RequestIds, PairQR, PairQR,
+              PairQR, SlotSet, PairRS, PairRS) \in Nat
+      /\ Sum8(VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+              ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs)
+           <= Sum8(PairVR, RequestIds, PairQR, PairQR,
+                   PairQR, SlotSet, PairRS, PairRS)
   BY <1>1, <1>3, Sum8Mono
 <1> QED
   BY <1>4 DEF Work, WorkBound
@@ -265,17 +275,17 @@ LEMMA GrowStep ==
     ASSUME LivenessAssumptions,
            VotedPairs \subseteq VotedPairs',
            SelectedRids \subseteq SelectedRids',
-           DispatchedRids \subseteq DispatchedRids',
+           DispatchedPairs \subseteq DispatchedPairs',
            RespondedPairs \subseteq RespondedPairs',
-           ProposedRids \subseteq ProposedRids',
+           ProposedPairs \subseteq ProposedPairs',
            UsedSlots \subseteq UsedSlots',
            LearnedPairs \subseteq LearnedPairs',
            ProcessedPairs \subseteq ProcessedPairs',
            \/ VotedPairs # VotedPairs'
            \/ SelectedRids # SelectedRids'
-           \/ DispatchedRids # DispatchedRids'
+           \/ DispatchedPairs # DispatchedPairs'
            \/ RespondedPairs # RespondedPairs'
-           \/ ProposedRids # ProposedRids'
+           \/ ProposedPairs # ProposedPairs'
            \/ UsedSlots # UsedSlots'
            \/ LearnedPairs # LearnedPairs'
            \/ ProcessedPairs # ProcessedPairs'
@@ -288,51 +298,51 @@ LEMMA GrowStep ==
   BY UniversesFinite
 <1>2. /\ VotedPairs \in SUBSET PairVR
       /\ SelectedRids \in SUBSET RequestIds
-      /\ DispatchedRids \in SUBSET RequestIds
+      /\ DispatchedPairs \in SUBSET PairQR
       /\ RespondedPairs \in SUBSET PairQR
-      /\ ProposedRids \in SUBSET RequestIds
+      /\ ProposedPairs \in SUBSET PairQR
       /\ UsedSlots \in SUBSET SlotSet
       /\ LearnedPairs \in SUBSET PairRS
       /\ ProcessedPairs \in SUBSET PairRS
-  BY DEF VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-         ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs
+  BY DEF VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+         ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs
 <1>3. /\ VotedPairs' \in SUBSET PairVR
       /\ SelectedRids' \in SUBSET RequestIds
-      /\ DispatchedRids' \in SUBSET RequestIds
+      /\ DispatchedPairs' \in SUBSET PairQR
       /\ RespondedPairs' \in SUBSET PairQR
-      /\ ProposedRids' \in SUBSET RequestIds
+      /\ ProposedPairs' \in SUBSET PairQR
       /\ UsedSlots' \in SUBSET SlotSet
       /\ LearnedPairs' \in SUBSET PairRS
       /\ ProcessedPairs' \in SUBSET PairRS
-  BY DEF VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-         ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs,
+  BY DEF VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+         ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs,
          PairVR, PairQR, SlotSet, PairRS
 <1>4. Work' =
-        Sum8(VotedPairs', SelectedRids', DispatchedRids', RespondedPairs',
-             ProposedRids', UsedSlots', LearnedPairs', ProcessedPairs')
+        Sum8(VotedPairs', SelectedRids', DispatchedPairs', RespondedPairs',
+             ProposedPairs', UsedSlots', LearnedPairs', ProcessedPairs')
   BY DEF Work, Sum8
 <1>5. WorkBound' = WorkBound
   BY DEF WorkBound, Sum8, PairVR, PairQR, SlotSet, PairRS
 <1>6. Work \in Nat /\ WorkBound \in Nat
   BY WorkBounded
-<1> HIDE DEF VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-             ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs
+<1> HIDE DEF VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+             ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs
 <1>fin. /\ IsFiniteSet(VotedPairs')
         /\ IsFiniteSet(SelectedRids')
-        /\ IsFiniteSet(DispatchedRids')
+        /\ IsFiniteSet(DispatchedPairs')
         /\ IsFiniteSet(RespondedPairs')
-        /\ IsFiniteSet(ProposedRids')
+        /\ IsFiniteSet(ProposedPairs')
         /\ IsFiniteSet(UsedSlots')
         /\ IsFiniteSet(LearnedPairs')
         /\ IsFiniteSet(ProcessedPairs')
   BY <1>1, <1>3, FS_Subset
-<1>7. /\ Sum8(VotedPairs', SelectedRids', DispatchedRids', RespondedPairs',
-              ProposedRids', UsedSlots', LearnedPairs', ProcessedPairs')
+<1>7. /\ Sum8(VotedPairs', SelectedRids', DispatchedPairs', RespondedPairs',
+              ProposedPairs', UsedSlots', LearnedPairs', ProcessedPairs')
            \in Nat
-      /\ Sum8(VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-              ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs)
-           < Sum8(VotedPairs', SelectedRids', DispatchedRids',
-                  RespondedPairs', ProposedRids', UsedSlots',
+      /\ Sum8(VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+              ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs)
+           < Sum8(VotedPairs', SelectedRids', DispatchedPairs',
+                  RespondedPairs', ProposedPairs', UsedSlots',
                   LearnedPairs', ProcessedPairs')
   BY <1>fin, Sum8Mono
 <1>8. Work' \in Nat /\ Work < Work'
@@ -342,39 +352,43 @@ LEMMA GrowStep ==
 <1> QED
   BY <1>6, <1>8, <1>9 DEF Remaining
 
+(* The eight sets read only WorkVars. *)
 LEMMA RemainingUnchanged ==
-    ASSUME UNCHANGED vars
+    ASSUME UNCHANGED WorkVars
     PROVE  Remaining' = Remaining
-BY DEF vars, Remaining, Work, WorkBound, Sum8, VotedPairs, SelectedRids,
-       DispatchedRids, RespondedPairs, ProposedRids, UsedSlots,
-       LearnedPairs, ProcessedPairs, HasVoted, PairVR, PairQR, SlotSet,
-       PairRS
+BY DEF WorkVars, Remaining, Work, WorkBound, Sum8, VotedPairs,
+       SelectedRids, DispatchedPairs, RespondedPairs, ProposedPairs,
+       UsedSlots, LearnedPairs, ProcessedPairs, HasVoted, ObservedItem,
+       PairVR, PairQR, SlotSet, PairRS
 
 (***************************************************************************
-Each of the eight sets depends on one variable.
+Each of the eight sets depends on one or two variables.
 ***************************************************************************)
 LEMMA SameSets ==
     /\ votes' = votes => VotedPairs' = VotedPairs
     /\ selected' = selected => SelectedRids' = SelectedRids
-    /\ dispatchers' = dispatchers => DispatchedRids' = DispatchedRids
+    /\ dispatchers' = dispatchers => DispatchedPairs' = DispatchedPairs
     /\ execResponse' = execResponse => RespondedPairs' = RespondedPairs
-    /\ proposed' = proposed => ProposedRids' = ProposedRids
+    /\ execResponse' = execResponse /\ proposed' = proposed =>
+            ProposedPairs' = ProposedPairs
     /\ consensusLog' = consensusLog => UsedSlots' = UsedSlots
     /\ learned' = learned => LearnedPairs' = LearnedPairs
     /\ processed' = processed => ProcessedPairs' = ProcessedPairs
-BY DEF VotedPairs, SelectedRids, DispatchedRids, RespondedPairs,
-       ProposedRids, UsedSlots, LearnedPairs, ProcessedPairs, HasVoted,
-       PairVR, PairQR, SlotSet, PairRS
+BY DEF VotedPairs, SelectedRids, DispatchedPairs, RespondedPairs,
+       ProposedPairs, UsedSlots, LearnedPairs, ProcessedPairs, HasVoted,
+       ObservedItem, PairVR, PairQR, SlotSet, PairRS
 
 (***************************************************************************
-Every step either leaves the state alone or lowers Remaining.
+Every step either lowers Remaining or leaves WorkVars alone. The steps
+that leave WorkVars alone are stuttering steps, crashes, recoveries and
+elections.
 ***************************************************************************)
 LEMMA RemainingStep ==
     ASSUME LivenessAssumptions
     PROVE  LiveState /\ [Next]_vars =>
-               (Remaining' < Remaining \/ UNCHANGED vars)
+               (Remaining' < Remaining \/ UNCHANGED WorkVars)
 <1> SUFFICES ASSUME LiveState, [Next]_vars
-             PROVE  Remaining' < Remaining \/ UNCHANGED vars
+             PROVE  Remaining' < Remaining \/ UNCHANGED WorkVars
   OBVIOUS
 <1> USE DEF LivenessAssumptions, StrictDelivery
 <1>t. /\ votes \in [RequestIds -> [Payloads -> SUBSET Replicas]]
@@ -387,8 +401,6 @@ LEMMA RemainingStep ==
       /\ Len(consensusLog) <= MaxSlots
       /\ learned \in [Replicas -> SUBSET (1..MaxSlots)]
       /\ processed \in [Replicas -> Nat]
-      /\ leader \in Replicas
-      /\ ProposedFromLeader
   BY DEF LiveState, LiveInv, ValidityInv, ValidityTypeOK
 <1>c. /\ MaxSlots \in Nat
       /\ NoValue \notin Payloads
@@ -403,7 +415,8 @@ LEMMA RemainingStep ==
         /\ UNCHANGED <<selected, dispatchers, execResponse, proposed,
                        consensusLog, learned, processed>>
     BY <2>1 DEF SubmitVote
-  <2>3. \A q \in RequestIds, p \in Payloads : votes[q][p] \subseteq votes'[q][p]
+  <2>3. \A q \in RequestIds, p \in Payloads :
+            votes[q][p] \subseteq votes'[q][p]
     BY <1>t, <2>2
   <2>4. replica \in votes'[request][payload]
     BY <1>t, <2>2
@@ -420,9 +433,9 @@ LEMMA RemainingStep ==
   <2>9. VotedPairs # VotedPairs'
     BY <2>8
   <2>10. /\ SelectedRids' = SelectedRids
-         /\ DispatchedRids' = DispatchedRids
+         /\ DispatchedPairs' = DispatchedPairs
          /\ RespondedPairs' = RespondedPairs
-         /\ ProposedRids' = ProposedRids
+         /\ ProposedPairs' = ProposedPairs
          /\ UsedSlots' = UsedSlots
          /\ LearnedPairs' = LearnedPairs
          /\ ProcessedPairs' = ProcessedPairs
@@ -446,9 +459,9 @@ LEMMA RemainingStep ==
   <2>5. SelectedRids # SelectedRids'
     BY <2>4
   <2>6. /\ VotedPairs' = VotedPairs
-        /\ DispatchedRids' = DispatchedRids
+        /\ DispatchedPairs' = DispatchedPairs
         /\ RespondedPairs' = RespondedPairs
-        /\ ProposedRids' = ProposedRids
+        /\ ProposedPairs' = ProposedPairs
         /\ UsedSlots' = UsedSlots
         /\ LearnedPairs' = LearnedPairs
         /\ ProcessedPairs' = ProcessedPairs
@@ -459,26 +472,26 @@ LEMMA RemainingStep ==
   <2>1. PICK replica \in Replicas, request \in RequestIds :
             Dispatch(replica, request)
     BY <1>3 DEF DispatchAction
-  <2>2. /\ dispatchers[request] = {}
+  <2>2. /\ replica \notin dispatchers[request]
         /\ dispatchers' =
               [dispatchers EXCEPT ![request] = @ \union {replica}]
         /\ UNCHANGED <<votes, selected, execResponse, proposed,
                        consensusLog, learned, processed>>
     BY <2>1 DEF Dispatch
   <2>3. /\ replica \in dispatchers'[request]
-        /\ \A q \in RequestIds : q # request =>
-              dispatchers'[q] = dispatchers[q]
+        /\ \A q \in RequestIds : dispatchers[q] \subseteq dispatchers'[q]
     BY <1>t, <2>2
-  <2>4. DispatchedRids \subseteq DispatchedRids'
-    BY <2>2, <2>3 DEF DispatchedRids
-  <2>5. request \in DispatchedRids' /\ request \notin DispatchedRids
-    BY <2>2, <2>3 DEF DispatchedRids
-  <2>6. DispatchedRids # DispatchedRids'
+  <2>4. DispatchedPairs \subseteq DispatchedPairs'
+    BY <2>3 DEF DispatchedPairs, PairQR
+  <2>5. /\ <<request, replica>> \in DispatchedPairs'
+        /\ <<request, replica>> \notin DispatchedPairs
+    BY <2>2, <2>3 DEF DispatchedPairs, PairQR
+  <2>6. DispatchedPairs # DispatchedPairs'
     BY <2>5
   <2>7. /\ VotedPairs' = VotedPairs
         /\ SelectedRids' = SelectedRids
         /\ RespondedPairs' = RespondedPairs
-        /\ ProposedRids' = ProposedRids
+        /\ ProposedPairs' = ProposedPairs
         /\ UsedSlots' = UsedSlots
         /\ LearnedPairs' = LearnedPairs
         /\ ProcessedPairs' = ProcessedPairs
@@ -510,54 +523,77 @@ LEMMA RemainingStep ==
     BY <2>5
   <2>7. /\ VotedPairs' = VotedPairs
         /\ SelectedRids' = SelectedRids
-        /\ DispatchedRids' = DispatchedRids
-        /\ ProposedRids' = ProposedRids
+        /\ DispatchedPairs' = DispatchedPairs
         /\ UsedSlots' = UsedSlots
         /\ LearnedPairs' = LearnedPairs
         /\ ProcessedPairs' = ProcessedPairs
     BY <2>2, SameSets
+  <2>8. ProposedPairs \subseteq ProposedPairs'
+    <3> SUFFICES ASSUME NEW p \in ProposedPairs
+                 PROVE  p \in ProposedPairs'
+      OBVIOUS
+    <3>1. /\ p \in PairQR
+          /\ p[1] \in RequestIds
+          /\ p[2] \in Replicas
+          /\ execResponse[p[1]][p[2]] # NoValue
+          /\ ObservedItem(p[1], execResponse[p[1]][p[2]]) \in proposed
+      BY DEF ProposedPairs, PairQR
+    <3>2. execResponse'[p[1]][p[2]] = execResponse[p[1]][p[2]]
+      BY <2>2, <2>3, <3>1
+    <3>3. proposed' = proposed
+      BY <2>2
+    <3> QED
+      BY <3>1, <3>2, <3>3 DEF ProposedPairs, PairQR, ObservedItem
   <2> QED
-    BY <2>4, <2>6, <2>7, GrowStep
+    BY <2>4, <2>6, <2>7, <2>8, GrowStep
 <1>5. CASE ProposeResponseAction
   <2>1. PICK replica \in Replicas, request \in RequestIds,
              responseValue \in Responses :
             ProposeResponse(replica, request, responseValue)
     BY <1>5 DEF ProposeResponseAction
   <2> DEFINE item == ObservedItem(request, responseValue)
-  <2>2. /\ replica = leader
-        /\ execResponse[request][replica] = responseValue
+  <2>2. /\ execResponse[request][replica] = responseValue
         /\ item \notin proposed
         /\ proposed' = proposed \union {item}
         /\ UNCHANGED <<votes, selected, dispatchers, execResponse,
                        consensusLog, learned, processed>>
     BY <2>1 DEF ProposeResponse
-  <2>3. item.rid = request
-    BY DEF ObservedItem
-  <2>4. \A other \in proposed : other.rid # request
-    <3> SUFFICES ASSUME NEW other \in proposed, other.rid = request
-                 PROVE  FALSE
-      OBVIOUS
-    <3>1. other = ObservedItem(request, execResponse[request][leader])
-      BY <1>t DEF ProposedFromLeader
-    <3> QED
-      BY <2>2, <3>1
+  <2>3. /\ execResponse[request][replica] # NoValue
+        /\ ObservedItem(request, execResponse[request][replica]) = item
+        /\ execResponse' = execResponse
+        /\ <<request, replica>> \in PairQR
+    BY <1>c, <2>2 DEF PairQR
   <2> HIDE DEF item
-  <2>5. ProposedRids \subseteq ProposedRids'
-    BY <2>2 DEF ProposedRids
-  <2>6. request \in ProposedRids' /\ request \notin ProposedRids
-    BY <2>2, <2>3, <2>4 DEF ProposedRids
-  <2>7. ProposedRids # ProposedRids'
-    BY <2>6
+  <2>4. ProposedPairs \subseteq ProposedPairs'
+    <3> SUFFICES ASSUME NEW p \in ProposedPairs
+                 PROVE  p \in ProposedPairs'
+      OBVIOUS
+    <3>1. /\ p \in PairQR
+          /\ execResponse[p[1]][p[2]] # NoValue
+          /\ ObservedItem(p[1], execResponse[p[1]][p[2]]) \in proposed
+      BY DEF ProposedPairs
+    <3> QED
+      BY <2>2, <2>3, <3>1 DEF ProposedPairs, PairQR, ObservedItem
+  <2>5. <<request, replica>> \in ProposedPairs'
+    <3>1. ObservedItem(request, execResponse[request][replica])
+              \in proposed'
+      BY <2>2, <2>3
+    <3> QED
+      BY <2>3, <3>1 DEF ProposedPairs, PairQR, ObservedItem
+  <2>6. <<request, replica>> \notin ProposedPairs
+    BY <2>2, <2>3 DEF ProposedPairs
+  <2>7. ProposedPairs # ProposedPairs'
+    BY <2>5, <2>6
   <2>8. /\ VotedPairs' = VotedPairs
         /\ SelectedRids' = SelectedRids
-        /\ DispatchedRids' = DispatchedRids
+        /\ DispatchedPairs' = DispatchedPairs
         /\ RespondedPairs' = RespondedPairs
         /\ UsedSlots' = UsedSlots
         /\ LearnedPairs' = LearnedPairs
         /\ ProcessedPairs' = ProcessedPairs
     BY <2>2, SameSets
   <2> QED
-    BY <2>5, <2>7, <2>8, GrowStep
+    BY <2>4, <2>7, <2>8, GrowStep
 <1>6. CASE DecideAction
   <2>1. PICK batch :
             /\ Len(consensusLog) < MaxSlots
@@ -577,9 +613,9 @@ LEMMA RemainingStep ==
     BY <2>4
   <2>6. /\ VotedPairs' = VotedPairs
         /\ SelectedRids' = SelectedRids
-        /\ DispatchedRids' = DispatchedRids
+        /\ DispatchedPairs' = DispatchedPairs
         /\ RespondedPairs' = RespondedPairs
-        /\ ProposedRids' = ProposedRids
+        /\ ProposedPairs' = ProposedPairs
         /\ LearnedPairs' = LearnedPairs
         /\ ProcessedPairs' = ProcessedPairs
     BY <2>1, SameSets
@@ -606,9 +642,9 @@ LEMMA RemainingStep ==
     BY <2>5
   <2>7. /\ VotedPairs' = VotedPairs
         /\ SelectedRids' = SelectedRids
-        /\ DispatchedRids' = DispatchedRids
+        /\ DispatchedPairs' = DispatchedPairs
         /\ RespondedPairs' = RespondedPairs
-        /\ ProposedRids' = ProposedRids
+        /\ ProposedPairs' = ProposedPairs
         /\ UsedSlots' = UsedSlots
         /\ ProcessedPairs' = ProcessedPairs
     BY <2>2, SameSets
@@ -645,9 +681,9 @@ LEMMA RemainingStep ==
     BY <2>7
   <2>9. /\ VotedPairs' = VotedPairs
         /\ SelectedRids' = SelectedRids
-        /\ DispatchedRids' = DispatchedRids
+        /\ DispatchedPairs' = DispatchedPairs
         /\ RespondedPairs' = RespondedPairs
-        /\ ProposedRids' = ProposedRids
+        /\ ProposedPairs' = ProposedPairs
         /\ UsedSlots' = UsedSlots
         /\ LearnedPairs' = LearnedPairs
     BY <2>2, SameSets
@@ -660,11 +696,11 @@ LEMMA RemainingStep ==
                DeliverBeforeConsensus(replica, item)
   BY <1>10 DEF DeliverBeforeConsensus
 <1>11. CASE \E replica \in Replicas : Crash(replica)
-  BY <1>11 DEF Crash
+  BY <1>11 DEF Crash, WorkVars
 <1>12. CASE \E replica \in Replicas : Recover(replica)
-  BY <1>12 DEF Recover
+  BY <1>12 DEF Recover, WorkVars
 <1>13. CASE \E replica \in Replicas : Elect(replica)
-  BY <1>13 DEF Elect
+  BY <1>13 DEF Elect, WorkVars
 <1>14. CASE \E replica \in Replicas,
                request \in RequestIds,
                payload \in Payloads :
@@ -676,23 +712,23 @@ LEMMA RemainingStep ==
                DirectNoLeaderRespond(replica, request, responseValue)
   BY <1>15 DEF DirectNoLeaderRespond
 <1>16. CASE UNCHANGED vars
-  BY <1>16
+  BY <1>16 DEF vars, WorkVars
 <1> QED
   BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10,
      <1>11, <1>12, <1>13, <1>14, <1>15, <1>16 DEF Next
 
 (***************************************************************************
-Remaining is a natural number that no step raises and every state-changing
-step lowers, so by induction on its value the state eventually stops
-changing.
+Remaining is a natural number that no step raises and that every step
+changing WorkVars lowers, so by induction on its value WorkVars eventually
+stops changing.
 ***************************************************************************)
-Halted == <>[][FALSE]_vars
+Halted == <>[][FALSE]_WorkVars
 HaltsBelow(n) ==
     []LiveState /\ [][Next]_vars => [](Remaining < n => Halted)
 
 THEOREM Termination ==
     ASSUME LivenessAssumptions
-    PROVE  Spec => <>[][FALSE]_vars
+    PROVE  Spec => <>[][FALSE]_WorkVars
 <1>0. /\ WorkBound \in Nat
       /\ Remaining \in Int
       /\ ~(Remaining < 0)
@@ -708,7 +744,8 @@ THEOREM Termination ==
   <2>1. LiveState /\ Remaining < n + 1 => (Remaining < n \/ Remaining = n)
     BY <1>0
   <2>2. LiveState /\ Remaining = n /\ [Next]_vars =>
-            ((Remaining < n)' \/ ((Remaining = n)' /\ UNCHANGED vars))
+            ((Remaining < n)' \/
+             ((Remaining = n)' /\ UNCHANGED WorkVars))
     BY RemainingStep, RemainingUnchanged
   <2> QED
     BY <2>1, <2>2, PTL DEF HaltsBelow, Halted

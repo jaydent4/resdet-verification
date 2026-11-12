@@ -49,11 +49,22 @@ assumed](spec/TLAPS.md) lists the theorems, the `StrictDelivery` assumption
 trust base. The same proof covers first-commit-wins, at-most-once delivery,
 prefix and race-winner agreement, response validity, and no-hole processing.
 
-**Theorem 2 (Liveness)** is proved as `FairSpec => Completion` under
-`LivenessAssumptions`: no crashes, so the initial leader is stable; a
-bounded log with a slot for every request; finite replica and request sets.
-That is liveness of this model with a stable leader, not of the protocol
-under leader changes, which stays with the conditional Lean proofs.
+**Theorem 2 (Liveness)** is proved in crash-stop form: under `FairSpec`,
+once a leader is stable and a set `U` of replicas stays up, every replica in
+`U` eventually delivers a response for every request id
+(`CrashStopLiveness`). Crashes, recoveries and finitely many leader changes
+before the last leader are allowed, and replicas outside `U` may fail
+forever. `FairSpec => Completion` for the no-crash case, the property
+`ResdetLiveness.cfg` checks, is a corollary. The result keeps the model's
+bounded log (a slot for every request, with `PrioritizeUniqueDecisions`),
+its closed, finite request set, and its consensus box, which agrees entries
+regardless of how many replicas are down.
+
+**Every invariant** that the passing TLC configurations check is proved for
+unbounded parameters in one theorem, `EveryCheckedInvariant`. Two of them
+hold only with a further switch off, as in the configurations that check
+them: `StrictQuorumOnly` without the timeout fallback, and
+`AtMostOnePhysicalDispatch` without crashes.
 
 ```sh
 make fetch-tlaps    # one-time project-local TLAPS installation
@@ -262,16 +273,18 @@ The paper's two headline theorems map directly to TLC checks:
 - **Theorem 1, Safety:** non-faulty Resdet replicas never deliver different
   responses for the same logical request. This is `ResponseAgreement`,
   strengthened by `AtMostOnceDelivery`, `PrefixAgreement`, and
-  `AppliedPrefixCorrect`. TLC checks these on the bounded configurations.
-  TLAPS proves `ResponseAgreement`, `AtMostOnceDelivery`, and
-  `PrefixAgreement` for unbounded parameters (`Theorem1` and `Safety` in
-  `spec/ResdetTheorems.tla`), and proves the replay form of
-  `AppliedPrefixCorrect` rather than the literal invariant.
+  `AppliedPrefixCorrect`. TLC checks these on the bounded configurations,
+  and TLAPS proves all of them for unbounded parameters (`Theorem1` and
+  `Safety` in `spec/ResdetTheorems.tla`, `AppliedPrefixCorrectInvariant` in
+  `spec/ResdetApplied.tla`).
 - **Theorem 2, Liveness:** every submitted logical request is eventually
   delivered at each non-faulty replica. This is `Completion` under
-  `FairSpec`. TLC checks it on `ResdetLiveness.cfg`, and TLAPS proves it for
-  unbounded finite parameters under `LivenessAssumptions` (`Theorem2` in
-  `spec/ResdetLiveness.tla`).
+  `FairSpec`. TLC checks it on `ResdetLiveness.cfg`, without crashes. TLAPS
+  proves it for any finite replica and request sets under
+  `LivenessAssumptions` and `SelectionPossible` (`Theorem2` in
+  `spec/ResdetLiveness.tla`) as a corollary of the crash-stop statement
+  `CrashStopLiveness`, which allows crashes and leader changes and requires
+  delivery only at the replicas that stay up.
 
 The consensus assumptions CG1 (index agreement) and CG2 (prefix agreement)
 are represented by one immutable global consensus log. CG3 (consensus
@@ -374,5 +387,6 @@ java -Xmx16g -jar ../tools/tla2tools.jar \
 TLC model checking is exhaustive only within the finite constants in the
 selected configuration. Passing these models is strong evidence for those
 bounds, not a machine-checked general theorem and not direct verification of
-the Go binary. The general statements of Theorem 1, and of Theorem 2 under
-`LivenessAssumptions`, for this specification are the TLAPS proofs above.
+the Go binary. The general statements of Theorem 1, of every checked
+invariant, and of Theorem 2 in crash-stop form under `LivenessAssumptions`,
+for this specification are the TLAPS proofs above.

@@ -64,10 +64,10 @@ ResponseItems == [rid : RequestIds, value : Responses]
 
 SingleBatches == {<<item>> : item \in ResponseItems}
 
+(* Written over a product rather than with two bound variables, which no
+   TLAPS backend supports; it is the same set of two-entry batches. *)
 DoubleBatches ==
-    {<<first, second>> :
-        first \in ResponseItems,
-        second \in ResponseItems}
+    {<<pair[1], pair[2]>> : pair \in ResponseItems \X ResponseItems}
 
 BatchType ==
     IF EnableBatching

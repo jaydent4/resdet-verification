@@ -1,16 +1,19 @@
 # TLAPS proofs of Theorem 1 (safety) and Theorem 2 (liveness)
 
 The TLC configurations check `spec/Resdet.tla` exhaustively, but only for the
-finite constants in each `.cfg`. The modules described here prove the paper's
-two theorems for the same specification with the TLA+ Proof System (TLAPS):
+finite constants in each `.cfg`. The modules described here prove, for the
+same specification with the TLA+ Proof System (TLAPS):
 
 - **Theorem 1 (safety)** and its companion safety properties, for **any**
   replica set, request, payload and response sets, quorum, and `MaxSlots`.
-- **Theorem 2 (liveness)**, for any finite replica and request sets and any
-  payload and response sets, under the conditions in
-  [Liveness](#theorem-2-liveness) below. Read that section before citing it:
-  it is liveness of this bounded-log model with a leader that is stable from
-  the start, not of the protocol under leader changes.
+- **Every invariant the passing TLC configurations check**, in one theorem
+  (`EveryCheckedInvariant`), under the same generality.
+- **Theorem 2 (liveness)** in crash-stop form: once a leader is stable and a
+  set of replicas stays up, each of them eventually delivers a response for
+  every request id, whatever the other replicas do. This is for any finite
+  replica and request sets, with crashes, recoveries and leader changes
+  allowed. It keeps the model's bounded log. Read
+  [Liveness](#theorem-2-liveness) before citing it.
 
 ```sh
 make fetch-tlaps    # one-time project-local TLAPS installation
@@ -74,100 +77,162 @@ model below: that adds less than it sounds.
 ## Theorem 2 (liveness)
 
 ```
-THEOREM Theorem2 == ASSUME LivenessAssumptions PROVE FairSpec => Completion
+THEOREM CrashStopLiveness ==
+    ASSUME LivenessAssumptions, NEW U \in SUBSET Replicas, VotersSuffice(U)
+    PROVE  FairSpec => (<>[]StableOn(U) => <>DoneOn(U))
 ```
 
-in `ResdetLiveness.tla`. `Completion` is the property the TLC liveness
-configuration checks: eventually every replica's deduplication state holds
-every request id. `Theorem2Delivered` states the same result as delivery:
-`FairSpec => <>AllDelivered`, eventually every replica has a delivered
-response for every request id. `FairSpec` is `Spec` with weak fairness on
-the eight protocol actions.
+in `ResdetLiveness.tla`, where
 
-This is narrower than the paper's Theorem 2 in three ways, detailed below:
-no replica ever crashes, the log is bounded with a scheduling restriction on
-consensus, and the request set is closed with every request submitted.
+- `StableOn(U) == leader # NoNode /\ U \subseteq up`: there is a leader and
+  every replica in `U` is up. `<>[]StableOn(U)` says a leader eventually
+  stays for good and the replicas in `U` eventually stay up. `U` is any set
+  of replicas; taking it to be the replicas that stay up gives the paper's
+  "every non-faulty replica". The leader need not be in `U`.
+- `DoneOn(U)`: every replica in `U` has every request id in its
+  deduplication state. `CrashStopDelivery` states the same conclusion as
+  delivery: every replica in `U` has a delivered response for every request
+  id.
+- `FairSpec` is `Spec` with weak fairness on the eight protocol actions.
 
-### What `LivenessAssumptions` says
+Replicas outside `U` may crash and recover forever, and any number of
+leaders may come and go before the last one. A new leader dispatches
+requests its predecessors already dispatched, and proposes its own response;
+that path (the core of the paper's Lemma 3) is covered. Three caveats on
+reading this as the paper's theorem:
 
-`Completion` is not a theorem of `FairSpec` for arbitrary constants, so the
-theorem carries conditions under which it holds (`ResdetLiveInv.tla`). They
-are sufficient, not necessary. TLC gives counterexamples to `Completion`
-without `~EnableCrashes`, without `PrioritizeUniqueDecisions`, without the
-`MaxSlots` bound, without the selection condition (two payloads, quorum two,
-split vote), and with `MutantNonContiguous`. The other mutant switches and
-the exact form of the selection condition are needed by the proof, not by
-the property.
+- **The premise is stronger than CG3(1).** The paper assumes a non-faulty
+  leader is eventually elected; `<>[]StableOn(U)` asks for a leader that
+  then stays. In this model the leader changes only by crashing, so that
+  means one final leader after finitely many changes.
+- **Consensus liveness is unconditional.** Agreement is the single `Decide`
+  action, which is fair and has no guard on which replicas are up. So
+  CG3(2) and CG3(3) are assumed however many replicas are down, and the
+  theorem holds even for `U` a single replica with every other replica down
+  forever. The paper assumes CG3 under the usual fault bound.
+- **A crash is a pause.** A recovered replica keeps its state, including
+  what it dispatched and the responses it received. A replica that led
+  before, dispatched a request, crashed, and is elected again does not
+  dispatch that request again. Under pure crash-stop, where a failed
+  replica never returns, this does not arise.
 
-| Conjunct | Role | Paper counterpart |
+Corollaries, also in `ResdetLiveness.tla`:
+
+| Theorem | Statement |
+| --- | --- |
+| `CrashStopDelivery` | As above, concluding `<>DeliveredOn(U)` |
+| `EventualAgreement` (Lemma 3) | With `U # {}`: `<>[]StableOn(U) => <>(LogRids = RequestIds)`, every request id is eventually agreed. It is derived from the main theorem, so it carries `VotersSuffice(U)`, which the paper's Lemma 3 does not need |
+| `Quiescence` | With `U # {}`: `<>[]StableOn(U) => <>[](~CanStep(U))`, eventually none of the eight enabling conditions ever holds again |
+| `EventualLearning` (Lemma 4) | With `U # {}`: eventually, for good, every replica in `U` has learned every agreed index |
+| `EventualProcessing` (Lemma 5) | With `U # {}`: eventually, for good, every replica in `U` has processed every agreed index |
+| `StableLeaderLiveness` | `FairSpec => (<>[](leader # NoNode /\ up = Replicas) => Completion)`, with crashes enabled or not |
+| `Theorem2` | With `~EnableCrashes`: `FairSpec => Completion`, the property `ResdetLiveness.cfg` checks, for unbounded finite parameters |
+
+### Assumptions
+
+| Assumption | Role | Paper counterpart |
 | --- | --- | --- |
 | `StrictDelivery`, `~MutantAllDispatch`, `~MutantNoQuorum` | The protocol, with no TLC mutant switched on | The protocol of Section 4 |
-| `~EnableCrashes` | No replica ever crashes; the initial leader stays leader | CG3(1), but **stronger**: the paper only needs a non-faulty leader eventually. `FairSpec` has no fairness on `Elect` or `Recover`, so nothing in it stands for CG3(1) |
+| `<>[]StableOn(U)` (premise of the theorem) | Eventually a leader exists for good and the replicas in `U` stay up | CG3(1) and "non-faulty replica" |
+| `VotersSuffice(U)` | The submissions of `U` alone get a request selected: `Quorum = 1`, or the timeout fallback is on, or a single payload and `Cardinality(U) >= Quorum` | One invocation suffices (Section 4); with a caller quorum, `U` must contain a quorum, as with `n = 2f+1` and at most `f` faults |
 | `PrioritizeUniqueDecisions`, `MaxSlots >= Cardinality(RequestIds)` | The log is bounded by `MaxSlots`; consensus gives each not-yet-agreed request a slot before any retry, and there is a slot for every request | **None.** It plays the role of CG3(2), but it restricts which entries consensus may agree, not only that it eventually agrees |
 | `IsFiniteSet(Replicas)`, `IsFiniteSet(RequestIds)` | Needed to count outstanding work | **None for requests**: the paper's request stream is open, and its claim is per submitted request |
-| `Quorum = 1`, or `EnableTimeoutFallback`, or a single payload | A request can be selected once every replica has submitted it | One invocation suffices (Section 4), or the same request body per id (Section 3) |
+
+`EnableCrashes`, `EnableBatching`, `EnableTimeoutFallback`, and `Quorum` are
+otherwise unconstrained. The assumptions are sufficient, not necessary. TLC
+gives counterexamples to `Completion` without `PrioritizeUniqueDecisions`,
+without the `MaxSlots` bound, with a split vote that no selection rule can
+resolve, and with `MutantNonContiguous`.
 
 Weak fairness in `FairSpec` stands for L1 (submission), L3 (downstream
 service), L4 (local execution), CG3(2) and CG3(3). The model has no
 messages, so L2 has no separate counterpart. The fairness is on each whole
 action, for example "some replica learns some index", not on each instance,
 which is weaker than the paper's per-request assumptions. It is enough here
-only because every instance can happen at most once and there are finitely
-many; with an open request stream one request could starve.
+because every instance can happen at most once and there are finitely many;
+with an open request stream one request could starve. `FairSpec` has no
+fairness on `Elect` or `Recover`: that a leader is eventually elected and
+the replicas of `U` eventually stay up is the premise `<>[]StableOn(U)`, not
+a consequence of fairness.
 
-### What kind of result this is
+### How the proof works
 
-Under `LivenessAssumptions` the model does a bounded amount of work: every
-step casts a vote, selects, dispatches, records a response, proposes, agrees
-a slot, learns an index, or processes an index, and none of these is ever
-undone or repeated. The proof uses exactly that:
-
-1. **Termination** (`ResdetLiveTermination.tla`, no fairness): every behavior
-   of `Spec` eventually stops changing, because a natural-number measure of
-   outstanding work strictly decreases on every step that changes the state.
-2. **Progress** (`ResdetLiveProgress.tla`): a reachable state in which not
-   every replica has delivered everything satisfies one of eight enabling
+1. **Termination** (`ResdetLiveTermination.tla`, no fairness): the protocol's
+   work eventually stops, `Spec => <>[][FALSE]_WorkVars`, where `WorkVars`
+   is every variable except `leader` and `up`. Each protocol step casts a
+   vote, selects, dispatches, records a response, proposes, agrees a slot,
+   learns an index, or processes an index; none is undone, and their number
+   is bounded by the constants. Crashes, recoveries and elections may go on
+   forever, but they change only `leader` and `up`.
+2. **Progress** (`ResdetLiveProgress.tla`): a reachable state with
+   `StableOn(U)` but not `DoneOn(U)` satisfies one of eight enabling
    conditions. This is the paper's Lemmas 3-5 read backwards: if nothing can
-   step, then every request was submitted, selected, dispatched, answered,
-   proposed and agreed, and every replica learned and processed the whole
-   log.
-3. **Enabledness** (`ResdetLiveEnabled.tla`): each enabling condition implies
-   the corresponding fair action is enabled and changes the state.
-4. **Assembly** (`ResdetLiveness.tla`): a fair behavior that never completes
-   would stop changing with one fair action enabled forever, which weak
-   fairness forbids.
-
-So this is "the model does finitely much work and cannot stop early". It
-is not a leads-to proof that mirrors Lemmas 3-5 step by step, and it does
-not address leader changes, crashed replicas, retries after a failure, or
-an unbounded log; re-dispatch by a new leader, the core of Lemma 3, is never
-exercised. For liveness under crash-stop failover and retries, see the
-conditional Lean proofs (`lean/PAPER.md`), which assume their progress
-contracts rather than deriving them from fairness.
-
-A stronger statement is true of the model and is not proved here. With
-crashes enabled, TLC confirms on a two-replica, two-request configuration
-that `<>[](leader # NoNode /\ up = Replicas) => Completion` holds under
-`FairSpec`. The termination argument cannot reach it, because crash and
-recovery cycles never terminate.
+   step, then every request was submitted by `U`, selected, dispatched by
+   the current leader, answered, proposed and agreed, and every replica in
+   `U` learned and processed the whole log. The conditions mention only the
+   leader and the replicas in `U`.
+3. **Enabledness** (`ResdetLiveEnabled.tla`): in such a state each enabling
+   condition implies the corresponding fair action is enabled.
+4. **Assembly** (`ResdetLiveness.tla`): take a fair behavior with
+   `<>[]StableOn(U)` that never reaches `DoneOn(U)`. Eventually the work has
+   stopped and `StableOn(U)` holds forever, so the leader no longer changes.
+   The enabling conditions read only the leader and `WorkVars`, so whichever
+   one holds then holds forever; its action is enabled forever, weak
+   fairness makes it step, and a step of a protocol action changes a work
+   variable.
 
 | Module | Content |
 | --- | --- |
-| `ResdetLiveInv.tla` | `LivenessAssumptions`, the invariant `LiveState`, the enabling conditions; `LiveStateInvariant` |
-| `ResdetLiveProgress.tla` | `Progress`: `LiveState /\ ~Done => CanStep` |
-| `ResdetLiveEnabled.tla` | `EnabledVote` ... `EnabledProcess`: each condition implies `ENABLED <<A>>_vars` |
-| `ResdetLiveTermination.tla` | `Termination`: `Spec => <>[][FALSE]_vars` |
-| `ResdetLiveness.tla` | `Theorem2`, `Theorem2Delivered` |
+| `ResdetLiveInv.tla` | `LivenessAssumptions`, `StableOn`, `DoneOn`, the invariant `LiveState`, the enabling conditions; `LiveStateInvariant` |
+| `ResdetLiveProgress.tla` | `Progress` |
+| `ResdetLiveEnabled.tla` | `EnabledVote` ... `EnabledProcess` |
+| `ResdetLiveTermination.tla` | `Termination` |
+| `ResdetLiveness.tla` | `CrashStopLiveness` and the corollaries above |
+
+### What remains narrower than the paper's Theorem 2
+
+- **Bounded log.** The model's log has `MaxSlots` slots, and liveness needs
+  the `PrioritizeUniqueDecisions` scheduling restriction on consensus. The
+  proof's termination argument depends on the bound. Nothing here covers an
+  unbounded log with unboundedly many retries.
+- **Closed request set.** `RequestIds` is finite and every request is
+  submitted by the replicas in `U`; the paper's claim is per submitted
+  request over an open stream.
+- **Crashes are pauses.** A replica that recovers has kept its state, and a
+  replica in `U` may have crashed and recovered before it became stable.
+  The paper's confirmed scope is crash-stop, which this includes, but
+  loss of state on recovery is not modelled.
+- **Lemmas 3-5 are stated about the final stretch, not as leads-to
+  chains.** `EventualAgreement`, `EventualLearning` and `EventualProcessing`
+  say what holds once the behavior has quiesced, which implies the paper's
+  per-index and per-request statements in this bounded model but is derived
+  differently.
+
+## Every TLC invariant
+
+```
+THEOREM EveryCheckedInvariant == ASSUME CoreProtocol PROVE Spec => [](...)
+```
+
+in `ResdetComplete.tla`. The conjuncts are exactly the twenty `INVARIANTS`
+of `ResdetCore.cfg`; the other passing configurations check subsets of
+them. `CoreProtocol` is `StrictDelivery /\ ~MutantAllDispatch /\
+~MutantNoQuorum`: the five mutants and the no-known-leader escape hatch are
+off, and nothing else is assumed. Two invariants are conditional by design
+and appear with their condition: `StrictQuorumOnly` when the timeout
+fallback is off, and `AtMostOnePhysicalDispatch` when crashes are off.
+
+| Module | Content |
+| --- | --- |
+| `ResdetRequests.tla` | `TypeOK`, `SelectionJustified`, `StrictQuorumOnly`, `OnlyAuthorizedDispatch`, `AtMostOnePhysicalDispatch`, `NoEarlyDelivery` |
+| `ResdetApplied.tla` | `AppliedPrefixCorrect` in its literal form: the delivery history is the deduplicated flattening of the processed log prefix |
+| `ResdetComplete.tla` | `EveryCheckedInvariant` |
 
 ## What is not proved with TLAPS
 
-- **Liveness under leader changes, crashes, or an unbounded log.** See above.
-- **Request-side invariants** `SelectionJustified`, `StrictQuorumOnly`,
-  `OnlyAuthorizedDispatch`, `AtMostOnePhysicalDispatch`, `NoEarlyDelivery`,
-  and the full `TypeOK`. TLC checks them; they are not part of Theorem 1.
-- **`AppliedPrefixCorrect` in its literal form.** `ReplayInvariant` states the
-  same fact (delivery state equals the deduplicated replay of the processed
-  prefix) with `ApplyItems` instead of `DedupFrom`/`FlattenBatches`.
+- **Liveness for an unbounded log or an open request stream.** See above.
+- **The mutant configurations.** They are expected to fail, and TLC's
+  counterexamples are the evidence.
 - **The Go implementation and Raft**, as for every other check in this
   repository.
 
@@ -198,7 +263,14 @@ as the previous `Head`/`Tail` recursion did, and the full TLC suite
 (`make check`: six passing configurations, six mutants) reports identical
 generated and distinct state counts before and after the change. The
 constants `ASSUME` also gained the name `ConstantAssumptions` so proofs can
-cite it. No action, invariant, or configuration changed.
+cite it.
+
+`DoubleBatches` was a set constructor with two bound variables,
+`{<<first, second>> : first \in ResponseItems, second \in ResponseItems}`,
+which no TLAPS backend supports. It is now the same set written over a
+product, `{<<pair[1], pair[2]>> : pair \in ResponseItems \X ResponseItems}`;
+the full TLC suite again reports identical output. No action, invariant, or
+configuration changed.
 
 ## Trust base
 

@@ -4,25 +4,24 @@ TLAPS liveness proof, part 1 of 5: assumptions, the invariant, and the
 enabling conditions that the rest of the proof of Theorem 2 is stated in.
 
 Theorem 2 of the paper says every submitted request is eventually
-delivered at every non-faulty replica. In Resdet.tla that is Completion
-under FairSpec. It is not a theorem of FairSpec for arbitrary constants:
-it needs a leader, a log with room for every request, and a way to select
-a request. LivenessAssumptions is a set of conditions under which it is
-proved. They are sufficient, not necessary: Completion also holds in
-some configurations they exclude, and in particular they rule out every
-crash, which the paper does not.
+delivered at every non-faulty replica. The statement proved here is its
+crash-stop form for this model: once a leader is stable and the replicas
+in a set U stay up, every replica in U eventually delivers a response for
+every request id. Replicas outside U may crash, recover, and crash again
+forever, and leaders may change any number of times before the stable one.
+
+  CrashStopLiveness ==
+      FairSpec => (<>[]StableOn(U) => <>DoneOn(U))      (ResdetLiveness.tla)
+
+Completion under FairSpec, the property the TLC liveness configuration
+checks, is the special case with no crashes and U = Replicas.
 ***************************************************************************)
 EXTENDS ResdetTheorems
 
 (***************************************************************************
+Conditions on the constants. They are sufficient, not necessary.
+
   StrictDelivery              The strict protocol (see ResdetFold.tla).
-  ~EnableCrashes              No replica crashes, so the initial leader
-                              stays leader and every replica is non-faulty.
-                              This is stronger than the paper's CG3(1),
-                              which only needs a non-faulty leader
-                              eventually. FairSpec has no fairness on
-                              Elect or Recover, so with crashes enabled
-                              Completion is false.
   ~MutantAllDispatch,
   ~MutantNoQuorum             The remaining TLC mutants are off.
   PrioritizeUniqueDecisions,
@@ -34,30 +33,48 @@ EXTENDS ResdetTheorems
                               it restricts which entries consensus may
                               agree, not only that it eventually agrees.
   finite Replicas, RequestIds Needed to count outstanding work.
-  last conjunct               A request can be selected once every replica
-                              has submitted it: one invocation suffices
-                              (the paper's protocol), or the timeout
-                              fallback is on, or all invocations carry the
-                              same payload (the paper's system model).
+
+EnableCrashes is not constrained: crashes, recoveries and elections may
+or may not be enabled.
 ***************************************************************************)
 LivenessAssumptions ==
     /\ StrictDelivery
-    /\ ~EnableCrashes
     /\ ~MutantAllDispatch
     /\ ~MutantNoQuorum
     /\ PrioritizeUniqueDecisions
     /\ IsFiniteSet(Replicas)
     /\ IsFiniteSet(RequestIds)
     /\ MaxSlots >= Cardinality(RequestIds)
-    /\ \/ Quorum = 1
-       \/ EnableTimeoutFallback
-       \/ \E payload \in Payloads : Payloads = {payload}
 
-(* Every replica has delivered a response for every request id.
-   Completion (Resdet.tla) is <>Done. *)
-Done == \A replica \in Replicas : seen[replica] = RequestIds
+(***************************************************************************
+The submissions of the replicas in U are enough to select a request: one
+invocation suffices (the paper's protocol), or the timeout fallback is on,
+or all invocations carry the same payload (the paper's system model) and
+U has a quorum.
+***************************************************************************)
+VotersSuffice(U) ==
+    \/ Quorum = 1
+    \/ EnableTimeoutFallback
+    \/ /\ \E payload \in Payloads : Payloads = {payload}
+       /\ Cardinality(U) >= Quorum
 
-AllVoted(request) == \A replica \in Replicas : HasVoted(replica, request)
+(* CG3(1) and non-faultiness, as a state predicate that the theorem
+   assumes holds from some point on: there is a leader, and every replica
+   in U is up. *)
+StableOn(U) == leader # NoNode /\ U \subseteq up
+
+(* Every replica in U has delivered a response for every request id. *)
+DoneOn(U) == \A replica \in U : seen[replica] = RequestIds
+
+(* Completion (Resdet.tla) is <>Done. *)
+Done == DoneOn(Replicas)
+
+(* Every variable except leader and up. Crash, Recover and Elect leave
+   these unchanged; every other action changes at least one of them. *)
+WorkVars ==
+    <<votes, selected, selectedByFallback, dispatchers, execResponse,
+      observed, proposed, consensusLog, learned, processed, delivered,
+      seen, unauthorizedDispatch, earlyDelivery>>
 
 (* The request ids that occur in the agreed log, by position. *)
 LogRids ==
@@ -66,19 +83,16 @@ LogRids ==
             \E k \in 1..Len(consensusLog[s]) :
                 consensusLog[s][k].rid = request}
 
-(* Only the leader dispatches, and only dispatchers get responses. *)
-LeaderOnly ==
-    /\ \A request \in RequestIds : dispatchers[request] \subseteq {leader}
-    /\ \A request \in RequestIds :
-         \A replica \in Replicas :
-            execResponse[request][replica] # NoValue =>
-                replica \in dispatchers[request]
+(* A known leader is up. *)
+LeaderUp == leader # NoNode => leader \in up
 
-(* Every proposal carries the leader's own response for its request. *)
-ProposedFromLeader ==
-    \A item \in proposed :
-        /\ execResponse[item.rid][leader] # NoValue
-        /\ item = ObservedItem(item.rid, execResponse[item.rid][leader])
+(* Without crashes the initial leader stays and every replica stays up. *)
+NoCrashStable == ~EnableCrashes => (leader # NoNode /\ up = Replicas)
+
+(* Without crashes only the one leader ever dispatches. *)
+SingleDispatcher ==
+    ~EnableCrashes =>
+        \A request \in RequestIds : dispatchers[request] \subseteq {leader}
 
 (* Until every request is agreed, no slot has been spent on a retry. *)
 SlotsCount ==
@@ -86,36 +100,40 @@ SlotsCount ==
     \/ Len(consensusLog) <= Cardinality(LogRids)
 
 LiveInv ==
-    /\ leader \in Replicas
-    /\ up = Replicas
+    /\ leader \in Replicas \union {NoNode}
+    /\ up \subseteq Replicas
+    /\ LeaderUp
+    /\ NoCrashStable
+    /\ SingleDispatcher
     /\ votes \in [RequestIds -> [Payloads -> SUBSET Replicas]]
     /\ seen \in [Replicas -> SUBSET RequestIds]
     /\ Len(consensusLog) <= MaxSlots
     /\ learned \in [Replicas -> SUBSET (1..MaxSlots)]
-    /\ LeaderOnly
-    /\ ProposedFromLeader
     /\ SlotsCount
 
 (* Everything the liveness proof knows about a reachable state. *)
 LiveState == LiveInv /\ ValidityInv /\ DeliveryInv
 
 (***************************************************************************
-Enabling conditions, one per fair action of FairSpec. Each is a plain
-state predicate that implies the action is enabled (ResdetLiveEnabled.tla),
-and in every reachable state that is not Done at least one of them holds
-(ResdetLiveProgress.tla).
+Enabling conditions, one per fair action of FairSpec. Each is a state
+predicate that reads only WorkVars and leader. In a reachable state where
+StableOn(U) holds, each implies its action is enabled
+(ResdetLiveEnabled.tla), and if DoneOn(U) does not hold then at least one
+of them does (ResdetLiveProgress.tla). They mention only the leader and
+the replicas in U, so what the other replicas do cannot disable them.
 ***************************************************************************)
-CanVote ==
-    \E replica \in Replicas, request \in RequestIds :
+CanVote(U) ==
+    \E replica \in U, request \in RequestIds :
         ~HasVoted(replica, request)
 
-CanSelect ==
+CanSelect(U) ==
     \E request \in RequestIds :
-        selected[request] = NoValue /\ AllVoted(request)
+        /\ selected[request] = NoValue
+        /\ \A replica \in U : HasVoted(replica, request)
 
 CanDispatch ==
     \E request \in RequestIds :
-        selected[request] # NoValue /\ dispatchers[request] = {}
+        selected[request] # NoValue /\ leader \notin dispatchers[request]
 
 CanRespond ==
     \E request \in RequestIds :
@@ -133,24 +151,24 @@ CanDecide ==
     /\ Len(consensusLog) < MaxSlots
     /\ \E item \in proposed : item.rid \notin LogRids
 
-CanLearn ==
-    \E replica \in Replicas :
+CanLearn(U) ==
+    \E replica \in U :
         \E slot \in 1..Len(consensusLog) : slot \notin learned[replica]
 
-CanProcess ==
-    \E replica \in Replicas :
+CanProcess(U) ==
+    \E replica \in U :
         /\ processed[replica] < Len(consensusLog)
         /\ processed[replica] + 1 \in learned[replica]
 
-CanStep ==
-    \/ CanVote
-    \/ CanSelect
+CanStep(U) ==
+    \/ CanVote(U)
+    \/ CanSelect(U)
     \/ CanDispatch
     \/ CanRespond
     \/ CanPropose
     \/ CanDecide
-    \/ CanLearn
-    \/ CanProcess
+    \/ CanLearn(U)
+    \/ CanProcess(U)
 
 (***************************************************************************
 Converse of FlattenBatchesItems (ResdetValidity.tla): every entry of every
@@ -312,28 +330,43 @@ THEOREM LiveInit == Init => LiveInv
   BY DEF Init
 <1>2. Len(consensusLog) = 0 /\ MaxSlots \in Nat
   BY ConstantAssumptions DEF Init
-<1>3. LeaderOnly
-  BY DEF Init, LeaderOnly
-<1>4. ProposedFromLeader
-  BY DEF Init, ProposedFromLeader
-<1>5. LogRids = {}
+<1>3. leader # NoNode
+  BY <1>1, ConstantAssumptions
+<1>4. LeaderUp /\ NoCrashStable
+  BY <1>1, <1>3 DEF LeaderUp, NoCrashStable
+<1>5. SingleDispatcher
+  BY DEF Init, SingleDispatcher
+<1>6. LogRids = {}
   BY <1>2 DEF LogRids
-<1>6. SlotsCount
-  BY <1>2, <1>5, FS_EmptySet DEF SlotsCount
+<1>7. SlotsCount
+  BY <1>2, <1>6, FS_EmptySet DEF SlotsCount
 <1> QED
-  BY <1>1, <1>2, <1>3, <1>4, <1>6 DEF LiveInv
+  BY <1>1, <1>2, <1>4, <1>5, <1>7 DEF LiveInv
 
 (* Steps that touch none of the variables LiveInv constrains, other than
    votes and seen, whose types are supplied separately. *)
 LEMMA LiveFrame ==
     ASSUME LiveInv,
-           UNCHANGED <<leader, up, consensusLog, learned, dispatchers,
-                       execResponse, proposed>>,
+           UNCHANGED <<leader, up, consensusLog, learned, dispatchers>>,
            votes' \in [RequestIds -> [Payloads -> SUBSET Replicas]],
            seen' \in [Replicas -> SUBSET RequestIds]
     PROVE  LiveInv'
-BY DEF LiveInv, LeaderOnly, ProposedFromLeader, SlotsCount, LogRids,
-       ObservedItem
+BY DEF LiveInv, LeaderUp, NoCrashStable, SingleDispatcher, SlotsCount,
+       LogRids
+
+(* Crash, Recover and Elect: only leader and up change, and they stay
+   well-formed. These steps happen only when crashes are enabled, which
+   makes the two no-crash conjuncts hold trivially. *)
+LEMMA LiveMembership ==
+    ASSUME LiveInv,
+           EnableCrashes,
+           leader' \in Replicas \union {NoNode},
+           up' \subseteq Replicas,
+           leader' # NoNode => leader' \in up',
+           UNCHANGED <<votes, seen, consensusLog, learned, dispatchers>>
+    PROVE  LiveInv'
+BY DEF LiveInv, LeaderUp, NoCrashStable, SingleDispatcher, SlotsCount,
+       LogRids
 
 (* Consensus agrees on one more batch whose first entry was eligible. *)
 LEMMA LiveDecideSlots ==
@@ -432,8 +465,7 @@ LEMMA LiveDecide ==
            batch[1] \in EligibleProposalItems,
            Len(consensusLog) < MaxSlots,
            consensusLog' = Append(consensusLog, batch),
-           UNCHANGED <<leader, up, votes, seen, learned, dispatchers,
-                       execResponse, proposed>>
+           UNCHANGED <<leader, up, votes, seen, learned, dispatchers>>
     PROVE  LiveInv'
 <1>1. consensusLog \in Seq(Seq(ResponseItems))
   BY DEF ValidityInv, ValidityTypeOK
@@ -446,14 +478,14 @@ LEMMA LiveDecide ==
     BY <1>1
   <2> QED
     BY <2>1, <2>2
-<1>4. /\ leader' \in Replicas
-      /\ up' = Replicas
+<1>4. /\ leader' \in Replicas \union {NoNode}
+      /\ up' \subseteq Replicas
       /\ votes' \in [RequestIds -> [Payloads -> SUBSET Replicas]]
       /\ seen' \in [Replicas -> SUBSET RequestIds]
       /\ learned' \in [Replicas -> SUBSET (1..MaxSlots)]
   BY DEF LiveInv
-<1>5. LeaderOnly' /\ ProposedFromLeader'
-  BY DEF LiveInv, LeaderOnly, ProposedFromLeader, ObservedItem
+<1>5. LeaderUp' /\ NoCrashStable' /\ SingleDispatcher'
+  BY DEF LiveInv, LeaderUp, NoCrashStable, SingleDispatcher
 <1> QED
   BY <1>2, <1>3, <1>4, <1>5 DEF LiveInv
 
@@ -468,16 +500,12 @@ THEOREM LiveStep ==
   BY DeliveryStep
 <1>s. seen' \in [Replicas -> SUBSET RequestIds]
   BY <1>d DEF DeliveryInv, DeliveryTypeOK
-<1>t. /\ leader \in Replicas
-      /\ up = Replicas
+<1>t. /\ leader \in Replicas \union {NoNode}
+      /\ up \subseteq Replicas
+      /\ LeaderUp
       /\ votes \in [RequestIds -> [Payloads -> SUBSET Replicas]]
       /\ learned \in [Replicas -> SUBSET (1..MaxSlots)]
       /\ dispatchers \in [RequestIds -> SUBSET Replicas]
-      /\ execResponse \in
-            [RequestIds -> [Replicas -> Responses \union {NoValue}]]
-      /\ proposed \subseteq ResponseItems
-      /\ LeaderOnly
-      /\ ProposedFromLeader
   BY DEF LiveInv, ValidityInv, ValidityTypeOK
 <1>1. CASE SubmitVoteAction
   <2>1. PICK replica \in Replicas, request \in RequestIds,
@@ -497,88 +525,26 @@ THEOREM LiveStep ==
   <2>2. /\ replica = leader
         /\ dispatchers' = [dispatchers EXCEPT
                               ![request] = @ \union {replica}]
-        /\ UNCHANGED <<leader, up, votes, execResponse, proposed,
-                       consensusLog, learned>>
+        /\ UNCHANGED <<leader, up, votes, consensusLog, learned>>
     BY <2>1 DEF Dispatch
-  <2>3. LeaderOnly'
+  <2>3. SingleDispatcher'
     <3>1. \A q \in RequestIds :
-             /\ dispatchers[q] \subseteq dispatchers'[q]
-             /\ dispatchers'[q] \subseteq dispatchers[q] \union {leader}
+             dispatchers'[q] \subseteq dispatchers[q] \union {leader}
       BY <2>2, <1>t
     <3> QED
-      BY <3>1, <2>2, <1>t DEF LeaderOnly
-  <2>4. ProposedFromLeader'
-    BY <2>2, <1>t DEF ProposedFromLeader, ObservedItem
+      BY <3>1, <2>2 DEF LiveInv, SingleDispatcher
+  <2>4. LeaderUp' /\ NoCrashStable'
+    BY <2>2 DEF LiveInv, LeaderUp, NoCrashStable
   <2>5. SlotsCount' /\ Len(consensusLog') <= MaxSlots
     BY <2>2 DEF LiveInv, SlotsCount, LogRids
   <2> QED
     BY <2>2, <2>3, <2>4, <2>5, <1>s, <1>t DEF LiveInv
 <1>4. CASE ExternalRespondAction
-  <2>1. PICK replica \in Replicas, request \in RequestIds,
-             responseValue \in Responses :
-             ExternalRespond(replica, request, responseValue)
-    BY <1>4 DEF ExternalRespondAction
-  <2>2. /\ replica \in dispatchers[request]
-        /\ execResponse[request][replica] = NoValue
-        /\ execResponse' = [execResponse EXCEPT
-                               ![request][replica] = responseValue]
-        /\ UNCHANGED <<leader, up, votes, dispatchers, proposed,
-                       consensusLog, learned>>
-    BY <2>1 DEF ExternalRespond
-  <2>3. \A q \in RequestIds : \A r \in Replicas :
-           execResponse'[q][r] =
-              IF q = request /\ r = replica
-              THEN responseValue
-              ELSE execResponse[q][r]
-    BY <2>2, <1>t
-  <2>4. LeaderOnly'
-    BY <2>2, <2>3, <1>t DEF LeaderOnly
-  <2>5. ProposedFromLeader'
-    <3> SUFFICES ASSUME NEW item \in proposed
-                 PROVE  /\ execResponse'[item.rid][leader] # NoValue
-                        /\ item = ObservedItem(
-                              item.rid, execResponse'[item.rid][leader])
-      BY <2>2 DEF ProposedFromLeader
-    <3>1. /\ item.rid \in RequestIds
-          /\ execResponse[item.rid][leader] # NoValue
-          /\ item = ObservedItem(item.rid, execResponse[item.rid][leader])
-      BY <1>t DEF ProposedFromLeader, ResponseItems
-    <3>2. execResponse'[item.rid][leader] = execResponse[item.rid][leader]
-      BY <3>1, <2>2, <2>3, <1>t
-    <3> QED
-      BY <3>1, <3>2
-  <2>6. SlotsCount' /\ Len(consensusLog') <= MaxSlots
-    BY <2>2 DEF LiveInv, SlotsCount, LogRids
-  <2> QED
-    BY <2>2, <2>4, <2>5, <2>6, <1>s, <1>t DEF LiveInv
+  BY <1>4, <1>s, <1>t, LiveFrame
+     DEF ExternalRespondAction, ExternalRespond
 <1>5. CASE ProposeResponseAction
-  <2>1. PICK replica \in Replicas, request \in RequestIds,
-             responseValue \in Responses :
-             ProposeResponse(replica, request, responseValue)
-    BY <1>5 DEF ProposeResponseAction
-  <2> DEFINE newItem == ObservedItem(request, responseValue)
-  <2>2. /\ replica = leader
-        /\ execResponse[request][replica] = responseValue
-        /\ proposed' = proposed \union {newItem}
-        /\ UNCHANGED <<leader, up, votes, dispatchers, execResponse,
-                       consensusLog, learned>>
-    BY <2>1 DEF ProposeResponse
-  <2>3. responseValue # NoValue
-    BY ConstantAssumptions
-  <2>4. /\ newItem.rid = request
-        /\ execResponse[newItem.rid][leader] # NoValue
-        /\ newItem = ObservedItem(
-              newItem.rid, execResponse[newItem.rid][leader])
-    BY <2>2, <2>3 DEF ObservedItem
-  <2> HIDE DEF newItem
-  <2>5. ProposedFromLeader'
-    BY <2>2, <2>4, <1>t DEF ProposedFromLeader
-  <2>6. LeaderOnly'
-    BY <2>2, <1>t DEF LeaderOnly
-  <2>7. SlotsCount' /\ Len(consensusLog') <= MaxSlots
-    BY <2>2 DEF LiveInv, SlotsCount, LogRids
-  <2> QED
-    BY <2>2, <2>5, <2>6, <2>7, <1>s, <1>t DEF LiveInv
+  BY <1>5, <1>s, <1>t, LiveFrame
+     DEF ProposeResponseAction, ProposeResponse
 <1>6. CASE DecideAction
   <2>1. ASSUME NEW item \in ResponseItems, DecideOne(item)
         PROVE  LiveInv'
@@ -589,8 +555,7 @@ THEOREM LiveStep ==
     <3>2. /\ Len(consensusLog) < MaxSlots
           /\ item \in EligibleProposalItems
           /\ consensusLog' = Append(consensusLog, <<item>>)
-          /\ UNCHANGED <<leader, up, votes, seen, learned, dispatchers,
-                         execResponse, proposed>>
+          /\ UNCHANGED <<leader, up, votes, seen, learned, dispatchers>>
       BY <2>1 DEF DecideOne
     <3> QED
       BY <3>1, <3>2, LiveDecide
@@ -605,8 +570,7 @@ THEOREM LiveStep ==
     <3>2. /\ Len(consensusLog) < MaxSlots
           /\ first \in EligibleProposalItems
           /\ consensusLog' = Append(consensusLog, <<first, second>>)
-          /\ UNCHANGED <<leader, up, votes, seen, learned, dispatchers,
-                         execResponse, proposed>>
+          /\ UNCHANGED <<leader, up, votes, seen, learned, dispatchers>>
       BY <2>2 DEF DecidePair
     <3> QED
       BY <3>1, <3>2, LiveDecide
@@ -617,13 +581,12 @@ THEOREM LiveStep ==
              LearnSlot(replica, slot)
     BY <1>7 DEF LearnAction
   <2>2. /\ learned' = [learned EXCEPT ![replica] = @ \union {slot}]
-        /\ UNCHANGED <<leader, up, votes, dispatchers, execResponse,
-                       proposed, consensusLog>>
+        /\ UNCHANGED <<leader, up, votes, dispatchers, consensusLog>>
     BY <2>1 DEF LearnSlot
   <2>3. learned' \in [Replicas -> SUBSET (1..MaxSlots)]
     BY <2>2, <1>t
-  <2>4. LeaderOnly' /\ ProposedFromLeader'
-    BY <2>2, <1>t DEF LeaderOnly, ProposedFromLeader, ObservedItem
+  <2>4. LeaderUp' /\ NoCrashStable' /\ SingleDispatcher'
+    BY <2>2 DEF LiveInv, LeaderUp, NoCrashStable, SingleDispatcher
   <2>5. SlotsCount' /\ Len(consensusLog') <= MaxSlots
     BY <2>2 DEF LiveInv, SlotsCount, LogRids
   <2> QED
@@ -637,11 +600,51 @@ THEOREM LiveStep ==
                DeliverBeforeConsensus(replica, item)
   BY <1>10 DEF DeliverBeforeConsensus
 <1>11. CASE \E replica \in Replicas : Crash(replica)
-  BY <1>11 DEF Crash
+  <2>1. PICK replica \in Replicas : Crash(replica)
+    BY <1>11
+  <2>2. /\ EnableCrashes
+        /\ up' = up \ {replica}
+        /\ leader' = IF leader = replica THEN NoNode ELSE leader
+        /\ UNCHANGED <<votes, seen, consensusLog, learned, dispatchers>>
+    BY <2>1 DEF Crash
+  <2>3. /\ leader' \in Replicas \union {NoNode}
+        /\ up' \subseteq Replicas
+    BY <2>2, <1>t
+  <2>4. leader' # NoNode => leader' \in up'
+    BY <2>2, <1>t DEF LeaderUp
+  <2> QED
+    BY <2>2, <2>3, <2>4, LiveMembership
 <1>12. CASE \E replica \in Replicas : Recover(replica)
-  BY <1>12 DEF Recover
+  <2>1. PICK replica \in Replicas : Recover(replica)
+    BY <1>12
+  <2>2. /\ EnableCrashes
+        /\ up' = up \union {replica}
+        /\ UNCHANGED <<leader, votes, seen, consensusLog, learned,
+                       dispatchers>>
+    BY <2>1 DEF Recover
+  <2>3. /\ leader' \in Replicas \union {NoNode}
+        /\ up' \subseteq Replicas
+    BY <2>2, <1>t
+  <2>4. leader' # NoNode => leader' \in up'
+    BY <2>2, <1>t DEF LeaderUp
+  <2> QED
+    BY <2>2, <2>3, <2>4, LiveMembership
 <1>13. CASE \E replica \in Replicas : Elect(replica)
-  BY <1>13 DEF Elect
+  <2>1. PICK replica \in Replicas : Elect(replica)
+    BY <1>13
+  <2>2. /\ EnableCrashes
+        /\ replica \in up
+        /\ leader' = replica
+        /\ UNCHANGED <<up, votes, seen, consensusLog, learned,
+                       dispatchers>>
+    BY <2>1 DEF Elect
+  <2>3. /\ leader' \in Replicas \union {NoNode}
+        /\ up' \subseteq Replicas
+    BY <2>2, <1>t
+  <2>4. leader' # NoNode => leader' \in up'
+    BY <2>2
+  <2> QED
+    BY <2>2, <2>3, <2>4, LiveMembership
 <1>14. CASE \E replica \in Replicas,
                request \in RequestIds,
                payload \in Payloads :
