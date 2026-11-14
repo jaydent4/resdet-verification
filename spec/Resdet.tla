@@ -643,6 +643,16 @@ SeenMatchesDelivered ==
             {delivered[replica][index].rid :
                 index \in 1..Len(delivered[replica])}
 
+(***************************************************************************
+Not an invariant. A witness configuration checks that this is violated,
+which shows that the model reaches logs in which retries by successive
+leaders have agreed different responses for one request id: the situation
+that first-commit-wins exists to resolve.
+***************************************************************************)
+NoConflictingResponses ==
+    \A left \in ConsensusItems, right \in ConsensusItems :
+        left.rid = right.rid => left.value = right.value
+
 RaceWinnerAgreement ==
     \A left \in Replicas, right \in Replicas :
         /\ RaceWinner(left) # NoValue

@@ -21,6 +21,7 @@ make check-tlaps    # re-prove everything from scratch, plus an audit
 ```
 
 `make check-tlaps` is local. It does not launch, stop, or modify a TLC run.
+[PAPER.md](PAPER.md) relates the specification itself to the paper.
 
 ## Theorem 1 (safety): what is proved
 
@@ -270,14 +271,22 @@ cite it.
 which no TLAPS backend supports. It is now the same set written over a
 product, `{<<pair[1], pair[2]>> : pair \in ResponseItems \X ResponseItems}`;
 the full TLC suite again reports identical output. No action, invariant, or
-configuration changed.
+existing configuration changed.
+
+`NoConflictingResponses` was added for the witness configuration
+`witness/RetryConflict.cfg`. It is not an invariant and no proof mentions it.
 
 ## Trust base
 
 - `tlapm` build `ff40755` (rolling `1.6.0-pre` release; `scripts/fetch-tlaps.sh`
   pins the archive checksum) with Zenon 0.8.4, Z3 4.8.9, Isabelle2025, and LS4.
 - Obligations are discharged by those backends. SMT and LS4 results are
-  trusted as reported; they are not re-certified in Isabelle (`tlapm -C`).
+  trusted as reported. Re-certification in Isabelle (`tlapm -C`) is not part
+  of the check: it only re-checks the obligations Zenon proved, which are a
+  handful per module, and in this TLAPS build it is unreliable. Tried on
+  `ResdetFold.tla`, it re-checked two of the three Zenon obligations and
+  stopped on the third with an Isabelle syntax error in the generated proof
+  script (the printing of `count - 1`), not with a logical rejection.
 - The proofs cite theorems of the TLAPS library (`NaturalsInduction`,
   `FiniteSetTheorems`). Their proofs ship with TLAPS and are not re-checked
   here.
@@ -302,4 +311,6 @@ configuration changed.
   not a proof that no other loophole exists.
 - The proofs are about `Resdet.tla`. Whether that specification matches the
   paper's pseudocode action by action is a review question, not something
-  TLAPS checks.
+  TLAPS checks. [PAPER.md](PAPER.md) records a first such review, and lists
+  where the specification makes each theorem easier or harder than the
+  paper's protocol.

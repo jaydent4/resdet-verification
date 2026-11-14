@@ -41,6 +41,7 @@ run_passing() {
         ResdetStrict.cfg
         ResdetBatching.cfg
         ResdetFailures.cfg
+        ResdetRetry.cfg
         ResdetFallback.cfg
         ResdetLiveness.cfg
     )
@@ -61,10 +62,11 @@ run_passing() {
 run_expected_failure() {
     local config="$1"
     local invariant="$2"
+    local label="${3:-COUNTEREXAMPLE}"
     local log="$run_root/${config##*/}.log"
 
-    printf '\n==> COUNTEREXAMPLE expected: %s (%s)\n' \
-        "$config" "$invariant"
+    printf '\n==> %s expected: %s (%s)\n' \
+        "$label" "$config" "$invariant"
     if (cd "$SPEC_DIR" && run_tlc "$config") >"$log" 2>&1; then
         printf 'TLC unexpectedly accepted mutant %s\n' "$config" >&2
         cat "$log" >&2
@@ -90,8 +92,16 @@ run_mutants() {
     run_expected_failure mutants/NoLeaderDirect.cfg ResponseAgreement
 }
 
+# A witness is a reachability check, not a mutant: the protocol is unchanged
+# and TLC is expected to find a state that violates the stated non-invariant.
+run_witnesses() {
+    run_expected_failure witness/RetryConflict.cfg NoConflictingResponses \
+        WITNESS
+}
+
 if [[ "$MODE" == "all" || "$MODE" == "passing" ]]; then
     run_passing
+    run_witnesses
 fi
 if [[ "$MODE" == "all" || "$MODE" == "mutants" ]]; then
     run_mutants

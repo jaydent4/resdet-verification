@@ -28,8 +28,9 @@ Read the [coverage and assumptions](lean/PROTOCOL.md): consensus safety remains
 abstract, and liveness requires explicit progress contracts including fair
 proposal/re-proposal attempts. The primary theorem only requires consensus
 progress for actual attempts by the eventual stable leader, not all old buffered
-proposals. Neither the Go code nor a literal translation of the TLA+ source has
-been verified.
+proposals. The Lean model is not a literal translation of the TLA+ source, and
+the Go code is not verified; the TLA+ source itself is proved separately with
+TLAPS (next section).
 
 ```sh
 make fetch-lean     # one-time project-local Lean 4.24.0 installation
@@ -46,7 +47,8 @@ The paper's **Theorem 1 (Safety)** is also proved directly about
 requests, responses, or log length. [What is proved and what is
 assumed](spec/TLAPS.md) lists the theorems, the `StrictDelivery` assumption
 (the mutant switches and the no-known-leader escape hatch are off), and the
-trust base. The same proof covers first-commit-wins, at-most-once delivery,
+trust base. [How the specification relates to the paper](spec/PAPER.md)
+reviews `Resdet.tla` against the paper's pseudocode. The same proof covers first-commit-wins, at-most-once delivery,
 prefix and race-winner agreement, response validity, and no-hole processing.
 
 **Theorem 2 (Liveness)** is proved in crash-stop form: under `FairSpec`,
@@ -153,8 +155,18 @@ The passing configurations check:
 | `ResdetStrict.cfg` | Aegean's matching 2-of-3 caller quorum integration | Pass |
 | `ResdetBatching.cfg` | Two request IDs, two-item batches, race ordering | Pass |
 | `ResdetFailures.cfg` | Crash/recovery and re-election; delivery safety only | Pass |
+| `ResdetRetry.cfg` | `ResdetFailures.cfg` with two log slots, so successive leaders can each get a response agreed | Pass |
+| `witness/RetryConflict.cfg` | Same constants; shows the model reaches a log with two different responses for one request id | Violates `NoConflictingResponses` |
 | `ResdetFallback.cfg` | Timeout fallback with a documented non-quorum selection | Pass |
 | `ResdetLiveness.cfg` | Stable-leader progress under weak fairness | Pass |
+
+`ResdetRetry.cfg` is the configuration that exercises the paper's retry
+scenario: a leader dispatches and crashes, a new leader dispatches again and
+gets a different response, and both responses are agreed. The witness
+configuration confirms such logs are reachable, and `ResdetRetry.cfg` checks
+that every replica still delivers only the first one. The other prototype
+configurations never put two different responses for one request id in the
+log.
 
 The prototype liveness model sets `PrioritizeUniqueDecisions = TRUE`. This is
 a bounded scheduling assumption: while an as-yet undecided request has a
