@@ -1,4 +1,4 @@
-# Resdet/EO verification: TLA+ and Lean
+# Resdet/EO verification: TLA+, TLAPS, and Lean
 
 This repository contains a small, executable TLA+ model of the Resdet/EO
 protocol from *Cyclades: Taming Nested-Response Nondeterminism in Replicated
@@ -28,8 +28,9 @@ Read the [coverage and assumptions](lean/PROTOCOL.md): consensus safety remains
 abstract, and liveness requires explicit progress contracts including fair
 proposal/re-proposal attempts. The primary theorem only requires consensus
 progress for actual attempts by the eventual stable leader, not all old buffered
-proposals. Neither the Go code nor a literal translation of the TLA+ source has
-been verified.
+proposals. The Lean model is not a literal translation of the TLA+ source, and
+the Go code is not verified; the TLA+ source itself is proved separately with
+TLAPS (next section).
 
 ```sh
 make fetch-lean     # one-time project-local Lean 4.24.0 installation
@@ -38,6 +39,43 @@ make check-lean     # proofs, concrete examples, and a strict axiom audit
 
 This is a separate local check; it does not launch, stop, or modify any TLC run.
 The existing `make check` and research profiles below remain TLA+-only.
+
+## TLAPS proofs
+
+The paper's **Theorem 1 (Safety)** is also proved directly about
+`spec/Resdet.tla` with the TLA+ Proof System, with no bound on replicas,
+requests, responses, or log length. [What is proved and what is
+assumed](spec/TLAPS.md) lists the theorems, the `StrictDelivery` assumption
+(the mutant switches and the no-known-leader escape hatch are off), and the
+trust base. [How the specification relates to the paper](spec/PAPER.md)
+reviews `Resdet.tla` against the paper's pseudocode. The same proof covers first-commit-wins, at-most-once delivery,
+prefix and race-winner agreement, response validity, and no-hole processing.
+
+**Theorem 2 (Liveness)** is proved in crash-stop form: under `FairSpec`,
+once a leader is stable and a set `U` of replicas stays up, every replica in
+`U` eventually delivers a response for every request id
+(`CrashStopLiveness`). Crashes, recoveries and finitely many leader changes
+before the last leader are allowed, and replicas outside `U` may fail
+forever. `FairSpec => Completion` for the no-crash case, the property
+`ResdetLiveness.cfg` checks, is a corollary. The result keeps the model's
+bounded log (a slot for every request, with `PrioritizeUniqueDecisions`),
+its closed, finite request set, and its consensus box, which agrees entries
+regardless of how many replicas are down.
+
+**Every invariant** that the passing TLC configurations check is proved for
+unbounded parameters in one theorem, `EveryCheckedInvariant`. Two of them
+hold only with a further switch off, as in the configurations that check
+them: `StrictQuorumOnly` without the timeout fallback, and
+`AtMostOnePhysicalDispatch` without crashes.
+
+```sh
+make fetch-tlaps    # one-time project-local TLAPS installation
+make check-tlaps    # re-prove every obligation from scratch, plus an audit
+```
+
+This is also a separate local check that touches no TLC run. To make the
+specification acceptable to TLAPS, its three `RECURSIVE` folds are now
+recursive functions; `make check` reports the same state counts as before.
 
 ## Quick start
 
@@ -117,8 +155,18 @@ The passing configurations check:
 | `ResdetStrict.cfg` | Aegean's matching 2-of-3 caller quorum integration | Pass |
 | `ResdetBatching.cfg` | Two request IDs, two-item batches, race ordering | Pass |
 | `ResdetFailures.cfg` | Crash/recovery and re-election; delivery safety only | Pass |
+| `ResdetRetry.cfg` | `ResdetFailures.cfg` with two log slots, so successive leaders can each get a response agreed | Pass |
+| `witness/RetryConflict.cfg` | Same constants; shows the model reaches a log with two different responses for one request id | Violates `NoConflictingResponses` |
 | `ResdetFallback.cfg` | Timeout fallback with a documented non-quorum selection | Pass |
 | `ResdetLiveness.cfg` | Stable-leader progress under weak fairness | Pass |
+
+`ResdetRetry.cfg` is the configuration that exercises the paper's retry
+scenario: a leader dispatches and crashes, a new leader dispatches again and
+gets a different response, and both responses are agreed. The witness
+configuration confirms such logs are reachable, and `ResdetRetry.cfg` checks
+that every replica still delivers only the first one. The other prototype
+configurations never put two different responses for one request id in the
+log.
 
 The prototype liveness model sets `PrioritizeUniqueDecisions = TRUE`. This is
 a bounded scheduling assumption: while an as-yet undecided request has a
@@ -237,10 +285,18 @@ The paper's two headline theorems map directly to TLC checks:
 - **Theorem 1, Safety:** non-faulty Resdet replicas never deliver different
   responses for the same logical request. This is `ResponseAgreement`,
   strengthened by `AtMostOnceDelivery`, `PrefixAgreement`, and
-  `AppliedPrefixCorrect`.
+  `AppliedPrefixCorrect`. TLC checks these on the bounded configurations,
+  and TLAPS proves all of them for unbounded parameters (`Theorem1` and
+  `Safety` in `spec/ResdetTheorems.tla`, `AppliedPrefixCorrectInvariant` in
+  `spec/ResdetApplied.tla`).
 - **Theorem 2, Liveness:** every submitted logical request is eventually
   delivered at each non-faulty replica. This is `Completion` under
-  `FairSpec`.
+  `FairSpec`. TLC checks it on `ResdetLiveness.cfg`, without crashes. TLAPS
+  proves it for any finite replica and request sets under
+  `LivenessAssumptions` and `SelectionPossible` (`Theorem2` in
+  `spec/ResdetLiveness.tla`) as a corollary of the crash-stop statement
+  `CrashStopLiveness`, which allows crashes and leader changes and requires
+  delivery only at the replicas that stay up.
 
 The consensus assumptions CG1 (index agreement) and CG2 (prefix agreement)
 are represented by one immutable global consensus log. CG3 (consensus
@@ -343,4 +399,6 @@ java -Xmx16g -jar ../tools/tla2tools.jar \
 TLC model checking is exhaustive only within the finite constants in the
 selected configuration. Passing these models is strong evidence for those
 bounds, not a machine-checked general theorem and not direct verification of
-the Go binary.
+the Go binary. The general statements of Theorem 1, of every checked
+invariant, and of Theorem 2 in crash-stop form under `LivenessAssumptions`,
+for this specification are the TLAPS proofs above.

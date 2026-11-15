@@ -7,3 +7,5 @@ __pycache__/
 /tools/lean-*
 /lean/.lake/
 .DS_Store
+/tools/tlapm/
+/spec/.tlacache/

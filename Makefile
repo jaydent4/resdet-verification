@@ -1,5 +1,6 @@
 .PHONY: check check-passing check-mutants check-research \
-	check-research-exhaustive cloudlab-research fetch-tlc check-lean fetch-lean
+	check-research-exhaustive cloudlab-research fetch-tlc check-lean fetch-lean \
+	check-tlaps fetch-tlaps
 
 check:
 	./scripts/check.sh all
@@ -27,3 +28,9 @@ fetch-lean:
 
 check-lean:
 	bash ./scripts/check-lean.sh
+
+fetch-tlaps:
+	bash ./scripts/fetch-tlaps.sh
+
+check-tlaps:
+	bash ./scripts/check-tlaps.sh

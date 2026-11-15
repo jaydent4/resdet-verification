@@ -22,7 +22,9 @@ Read [PROTOCOL.md](PROTOCOL.md) for the coverage matrix and the exact liveness
 contracts. In particular, pending requests need fair proposal/re-proposal
 attempts; consensus progress is required only for the eventual stable leader's
 actual attempts. This is not a proof of Raft, the Go implementation, or the literal
-TLA+ source. Nothing here connects to CloudLab or changes a running TLC job.
+TLA+ source. The TLA+ source has its own, separate machine-checked proofs
+([`spec/TLAPS.md`](../spec/TLAPS.md)); [PAPER.md](PAPER.md) compares the two.
+Nothing here connects to CloudLab or changes a running TLC job.
 
 ## Run it
 

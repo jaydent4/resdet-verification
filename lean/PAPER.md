@@ -103,6 +103,11 @@ repeatedly invokes L4. Its assumptions should include L4 explicitly. An infinite
 behavior can learn an entry and never process it without local progress; the
 existing `Protocol.Tests.fairness_is_necessary` checks that distinction.
 
+*Status, paper source of 2026-11-10:* the restated theorem in the liveness
+subsection now reads "Under CG2-CG3 and L1-L4", so this point is addressed
+there. The first statement of Theorem 2, at the start of the correctness
+section, lists no assumptions.
+
 ### 2. State crash-stop failures and retries (resolved by the author)
 
 Suggested scope wording, matching the confirmed model:
@@ -112,6 +117,14 @@ Suggested scope wording, matching the confirmed model:
 > with the same request ID and body through the eventual stable leader. Liveness
 > applies to non-faulty replicas. Process recovery and restoration of local
 > protocol state are outside scope.
+
+*Status, paper source of 2026-11-10:* the suggested wording has not been
+adopted. The fault model in the protocol section still says replicas "may
+crash, recover, or be temporarily unavailable", and the mechanization
+paragraph speaks of a recovered leader. The Lean results remain stated for
+crash-stop as confirmed on 2026-09-23; the TLA+ specification models a crash
+as a pause with no state lost (see `spec/PAPER.md`). None of the three is the
+crash-recovery-with-lost-state reading of that sentence.
 
 The recovery-marker counterexample from the earlier review is **not a blocker**
 for this scope. That counterexample requires a failed replica to restart, which
@@ -133,6 +146,49 @@ does not constrain that choice. The paper's `wait_any` claim should specify that
 the agreed order is the order observable by the race primitive. Similarly,
 `deterministic_continuation` does not claim to repair arbitrary concurrency bugs,
 which section 8 already excludes.
+
+## Relationship to the TLAPS proofs
+
+Since 2026-11 the TLA+ specification `spec/Resdet.tla` also has machine-checked
+proofs, made with the TLA+ Proof System (`make check-tlaps`,
+[`spec/TLAPS.md`](../spec/TLAPS.md)). They are independent of the Lean
+development: neither is derived from, or checked against, the other, and the
+sentence "a literal translation of the TLA+ source has not been verified"
+elsewhere in these notes is about the Lean model, not about the TLA+ source,
+which is now verified directly.
+
+| Paper claim | Lean (`Resdet.Paper`) | TLAPS (`spec/`) |
+| --- | --- | --- |
+| Lemma 1, Lemma 2 | `lemma_1_same_processed_entry`, `lemma_2_no_hole_processing` | `ReplayInvariant`; `ProcessedPrefixLearned`, `LearnedOnlyDecided`, `ProcessedWithinLog` in `Safety` |
+| Theorem 1 | `theorem_1_crash_stop` | `Theorem1`, `Safety` |
+| First committed response, deliver once | `first_committed_response`, `Protocol.at_most_once_delivery` | `DeliveredFirstCommit`, `AtMostOnceDelivery` in `Safety` |
+| Race winner | `race_winner_for_group` | `RaceWinnerAgreement`, `PrefixAgreement` in `Safety` |
+| Leader-only dispatch, validity, quorum | `Protocol.only_leader_dispatches`, `Protocol.response_validity`, `Protocol.selection_justified` | `EveryCheckedInvariant` |
+| Batching | `batching_equivalent`, `rebatching_preserves_delivery` | Batching is part of the specification; no separate re-grouping theorem |
+| Lemmas 3-5 | `eventually_agreed`, `eventually_prefix_learned`, `Resdet.eventually_processed`, `eventually_delivered` | `EventualAgreement`, `EventualLearning`, `EventualProcessing` |
+| Theorem 2 | `theorem_2_crash_stop` | `CrashStopLiveness`, `CrashStopDelivery` |
+| Deterministic continuation | `deterministic_continuation` | Not stated |
+
+The two developments differ in what they assume, so neither subsumes the
+other:
+
+- **Model.** Lean proves statements about its own parameterized transition
+  system. TLAPS proves statements about the specification that TLC checks.
+- **Failures.** Lean's primary results are crash-stop: a failed replica never
+  returns. In the TLA+ specification a crash is a pause and a recovered
+  replica keeps its state; the TLAPS liveness theorem asks only that a set of
+  replicas eventually stays up.
+- **Liveness premises.** Lean assumes explicit progress contracts
+  (`StableLeader`, `StableConsensusProgress`, `PendingHandlers`,
+  `DeliveryProgress`) and consensus progress only for the stable leader's
+  actual attempts. TLAPS derives progress from weak fairness of the
+  specification's eight actions, with a consensus action that is fair
+  regardless of which replicas are up.
+- **Log.** Lean's log is unbounded. The TLA+ log is bounded by `MaxSlots`,
+  and the TLAPS liveness proof depends on that bound and on
+  `PrioritizeUniqueDecisions`.
+- **Quorum.** Lean's Theorem 2 is for quorum one. The TLAPS theorem also
+  covers a caller quorum when the replicas that stay up contain one.
 
 ## Completion criterion and reproduction
 
