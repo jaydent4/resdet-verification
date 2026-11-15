@@ -30,6 +30,19 @@ MODULES=(
     ResdetLiveEnabled
     ResdetLiveTermination
     ResdetLiveness
+    ResdetContinuation
+    ResdetPaperSafety
+    ResdetPaperLive
+    ResdetPaperLemma3
+    ResdetPaperLemma45
+    ResdetPaperTheorems
+)
+
+# The specifications the proofs are about, each with the name of its one
+# permitted assumption about its constants.
+SPECS=(
+    "Resdet:ConstantAssumptions"
+    "ResdetPaper:PaperAssumptions"
 )
 
 if [[ ! -x "$TLAPM" ]]; then
@@ -53,12 +66,14 @@ fail_audit() {
 for file in "$SPEC_DIR"/*.tla; do
     name="$(basename "$file" .tla)"
     known=0
-    [[ "$name" == "Resdet" ]] && known=1
+    for spec in "${SPECS[@]}"; do
+        [[ "$name" == "${spec%%:*}" ]] && known=1
+    done
     for module in "${MODULES[@]}"; do
         [[ "$name" == "$module" ]] && known=1
     done
     if [[ "$known" -eq 0 ]]; then
-        fail_audit "spec/$name.tla is neither Resdet.tla nor a checked proof module."
+        fail_audit "spec/$name.tla is neither a specification nor a checked proof module."
     fi
 done
 for library in Naturals Integers Reals Sequences FiniteSets Bags TLC TLAPS \
@@ -70,18 +85,28 @@ for library in Naturals Integers Reals Sequences FiniteSets Bags TLC TLAPS \
     fi
 done
 
-# 2. The specification states no theorem (tlapm would accept it unproved)
-#    and has exactly one assumption, the one about its constants.
-if grep -nE '\b(THEOREM|LEMMA|PROPOSITION|COROLLARY|AXIOM|ASSUMPTION|OMITTED)\b' \
-        "$SPEC_DIR/Resdet.tla"; then
-    fail_audit 'Resdet.tla states a theorem or axiom.'
-fi
-assumes="$(grep -E '\bASSUME\b' "$SPEC_DIR/Resdet.tla" || true)"
-if [[ "$assumes" != 'ASSUME ConstantAssumptions ==' ]]; then
-    fail_audit 'Resdet.tla must have exactly one ASSUME, ConstantAssumptions.'
-fi
-if grep -n 'RECURSIVE' "$SPEC_DIR/Resdet.tla" | grep -v 'TLAPS rejects'; then
-    fail_audit 'Resdet.tla declares a RECURSIVE operator, which TLAPS rejects.'
+# 2. A specification states no theorem (tlapm would accept it unproved)
+#    and has exactly one assumption, the named one about its constants.
+for spec in "${SPECS[@]}"; do
+    name="${spec%%:*}"
+    assumption="${spec##*:}"
+    file="$SPEC_DIR/$name.tla"
+    if [[ ! -f "$file" ]]; then
+        fail_audit "missing specification spec/$name.tla."
+        continue
+    fi
+    if grep -nE '\b(THEOREM|LEMMA|PROPOSITION|COROLLARY|AXIOM|ASSUMPTION|OMITTED)\b' \
+            "$file"; then
+        fail_audit "$name.tla states a theorem or axiom."
+    fi
+    assumes="$(grep -E '\bASSUME\b' "$file" || true)"
+    if [[ "$assumes" != "ASSUME $assumption ==" ]]; then
+        fail_audit "$name.tla must have exactly one ASSUME, $assumption."
+    fi
+done
+if grep -n 'RECURSIVE' "$SPEC_DIR"/Resdet.tla "$SPEC_DIR"/ResdetPaper.tla \
+        | grep -v 'TLAPS rejects'; then
+    fail_audit 'A specification declares a RECURSIVE operator, which TLAPS rejects.'
 fi
 
 # 3. Proof modules contain no axiom and no omitted proof, at any
@@ -114,6 +139,28 @@ for module in "${MODULES[@]}"; do
         fail_audit "$module.tla has an ASSUME outside a theorem statement or proof step."
     fi
 done
+# 4. No theorem or lemma name is used twice within one family of modules
+#    (the modules about one specification extend each other). tlapm does
+#    not reject a second theorem of the same name, and which one a later
+#    citation refers to is then unclear.
+for family in 'ResdetPaper' 'other'; do
+    names=""
+    for module in "${MODULES[@]}"; do
+        case "$module" in
+            ResdetPaper*) [[ "$family" == 'ResdetPaper' ]] || continue ;;
+            *) [[ "$family" == 'other' ]] || continue ;;
+        esac
+        [[ -f "$SPEC_DIR/$module.tla" ]] || continue
+        names+="$(grep -hE '^(THEOREM|LEMMA) +[A-Za-z0-9_]+ *==' \
+            "$SPEC_DIR/$module.tla" | awk '{print $2}')"$'\n'
+    done
+    duplicates="$(printf '%s' "$names" | sort | uniq -d)"
+    if [[ -n "$duplicates" ]]; then
+        printf '%s\n' "$duplicates" >&2
+        fail_audit "a theorem or lemma name is defined twice."
+    fi
+done
+
 if [[ "$audit_failed" -ne 0 ]]; then
     exit 1
 fi

@@ -157,17 +157,23 @@ sentence "a literal translation of the TLA+ source has not been verified"
 elsewhere in these notes is about the Lean model, not about the TLA+ source,
 which is now verified directly.
 
-| Paper claim | Lean (`Resdet.Paper`) | TLAPS (`spec/`) |
+The table lists the TLAPS results about `spec/Resdet.tla`. TLAPS also
+proves Lemmas 1-5 and Theorems 1 and 2 about a second, paper-level
+specification, `spec/ResdetPaper.tla`, which like the Lean model has an
+unbounded log and leaders that can be replaced; `spec/TLAPS.md` describes
+it.
+
+| Paper claim | Lean (`Resdet.Paper`) | TLAPS (`spec/`, about `Resdet.tla`) |
 | --- | --- | --- |
 | Lemma 1, Lemma 2 | `lemma_1_same_processed_entry`, `lemma_2_no_hole_processing` | `ReplayInvariant`; `ProcessedPrefixLearned`, `LearnedOnlyDecided`, `ProcessedWithinLog` in `Safety` |
 | Theorem 1 | `theorem_1_crash_stop` | `Theorem1`, `Safety` |
 | First committed response, deliver once | `first_committed_response`, `Protocol.at_most_once_delivery` | `DeliveredFirstCommit`, `AtMostOnceDelivery` in `Safety` |
 | Race winner | `race_winner_for_group` | `RaceWinnerAgreement`, `PrefixAgreement` in `Safety` |
 | Leader-only dispatch, validity, quorum | `Protocol.only_leader_dispatches`, `Protocol.response_validity`, `Protocol.selection_justified` | `EveryCheckedInvariant` |
-| Batching | `batching_equivalent`, `rebatching_preserves_delivery` | Batching is part of the specification; no separate re-grouping theorem |
+| Batching | `batching_equivalent`, `rebatching_preserves_delivery` | `AppliedPrefixCorrectInvariant`, `RebatchingPreservesDelivery` |
 | Lemmas 3-5 | `eventually_agreed`, `eventually_prefix_learned`, `Resdet.eventually_processed`, `eventually_delivered` | `EventualAgreement`, `EventualLearning`, `EventualProcessing` |
 | Theorem 2 | `theorem_2_crash_stop` | `CrashStopLiveness`, `CrashStopDelivery` |
-| Deterministic continuation | `deterministic_continuation` | Not stated |
+| Deterministic continuation | `deterministic_continuation` | `DeterministicContinuation` |
 
 The two developments differ in what they assume, so neither subsumes the
 other:
@@ -184,9 +190,13 @@ other:
   actual attempts. TLAPS derives progress from weak fairness of the
   specification's eight actions, with a consensus action that is fair
   regardless of which replicas are up.
-- **Log.** Lean's log is unbounded. The TLA+ log is bounded by `MaxSlots`,
-  and the TLAPS liveness proof depends on that bound and on
-  `PrioritizeUniqueDecisions`.
+- **Log.** Lean's log is unbounded. The log of `Resdet.tla` is bounded by
+  `MaxSlots`, and the TLAPS liveness proof for it depends on that bound and
+  on `PrioritizeUniqueDecisions`. `ResdetPaper.tla` has an unbounded log,
+  and its liveness proofs are weak-fairness arguments per request.
+- **Leader.** Lean's Theorem 2 and the TLAPS Theorem 2 on `ResdetPaper.tla`
+  both need a leader that eventually stays. The paper's CG3(1) does not say
+  so; `spec/PAPER.md` has the counterexample.
 - **Quorum.** Lean's Theorem 2 is for quorum one. The TLAPS theorem also
   covers a caller quorum when the replicas that stay up contain one.
 
