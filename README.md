@@ -42,6 +42,21 @@ The existing `make check` and research profiles below remain TLA+-only.
 
 ## TLAPS proofs
 
+**Every lemma and theorem of the paper's correctness section** (Lemmas 1-5,
+Theorems 1 and 2) is proved with the TLA+ Proof System about
+`spec/ResdetPaper.tla`, a second specification of the core protocol written
+at the level of the paper's pseudocode: per-replica logs, an unbounded
+agreed log, request ids submitted over time, and leaders that can be
+replaced at any time. Theorem 2 there says: with a leader that eventually
+stays, every non-faulty replica eventually delivers a response for every
+submitted request id. "A leader that stays" is stronger than the paper's
+CG3(1) as written, and it is needed: TLC shows the theorem failing when
+leaders are replaced forever. `spec/paper-mc/` is a finite
+instance that TLC checks under `make check`.
+
+The rest of this section is about `spec/Resdet.tla`, the model with the
+Cyclades extensions that the TLC configurations below were built around.
+
 The paper's **Theorem 1 (Safety)** is also proved directly about
 `spec/Resdet.tla` with the TLA+ Proof System, with no bound on replicas,
 requests, responses, or log length. [What is proved and what is
@@ -61,6 +76,9 @@ forever. `FairSpec => Completion` for the no-crash case, the property
 bounded log (a slot for every request, with `PrioritizeUniqueDecisions`),
 its closed, finite request set, and its consensus box, which agrees entries
 regardless of how many replicas are down.
+
+**Deterministic continuation** (Sections 3.3 and 6.3) and **batch
+regrouping** (Section 6.2) are proved in `spec/ResdetContinuation.tla`.
 
 **Every invariant** that the passing TLC configurations check is proved for
 unbounded parameters in one theorem, `EveryCheckedInvariant`. Two of them
@@ -159,6 +177,11 @@ The passing configurations check:
 | `witness/RetryConflict.cfg` | Same constants; shows the model reaches a log with two different responses for one request id | Violates `NoConflictingResponses` |
 | `ResdetFallback.cfg` | Timeout fallback with a documented non-quorum selection | Pass |
 | `ResdetLiveness.cfg` | Stable-leader progress under weak fairness | Pass |
+| `paper-mc/PaperSafety.cfg` | `ResdetPaper.tla`: Lemma 1, Lemma 2, Theorem 1 and the proof invariants, two replicas, two responses, two elections | Pass |
+| `paper-mc/PaperLiveness.cfg`, `PaperLiveness2.cfg` | `ResdetPaper.tla`: Lemmas 3-5 and Theorem 2 under fairness | Pass |
+| `paper-mc/witness/PaperLeaderFlapping.cfg` | Lemma 3 with CG3(1) as the paper writes it: always a leader, none that stays | Liveness violation |
+| `paper-mc/witness/PaperNoStableLeader.cfg` | Theorem 2 when the leader crashes and none is elected | Liveness violation |
+| `paper-mc/witness/PaperPersistentDedup.cfg` | Lemma 3 with request deduplication kept across leadership terms | Liveness violation |
 
 `ResdetRetry.cfg` is the configuration that exercises the paper's retry
 scenario: a leader dispatches and crashes, a new leader dispatches again and

@@ -18,6 +18,18 @@ about. Request ingress, leadership, crashes, and consensus are abstracted.
 None of those abstractions makes Theorem 1 easier to prove than it is for the
 paper's protocol under crash-stop. All of them make Theorem 2 easier.
 
+**`ResdetPaper.tla` was written in response to this review.** It is a second
+specification, of the core protocol only, in which the differences below
+that made the theorems easier are removed: replicas have their own logs
+(difference 7), the log is unbounded and consensus has no scheduling
+restriction (2), the leader can be replaced without crashing and a replaced
+leader's proposal can be lost (3), requests are submitted over time and are
+accepted again by each new leader (4), liveness is stated per request id and
+per non-faulty replica (5), and failures are crash-stop (1). The paper's
+Lemmas 1-5 and Theorems 1 and 2 are proved about it; Lemma 3 and Theorem 2
+need CG3(1) to give a leader that stays, which the paper does not say (see
+below and [TLAPS.md](TLAPS.md)). The review below is of `Resdet.tla`.
+
 ## Pseudocode to specification
 
 | Paper | `Resdet.tla` | Correspondence |
@@ -124,10 +136,22 @@ These are observations for the authors, about the 2026-11-10 source.
   deduplication being in memory, which its own TODO notes is not stated in
   Section 4. `lean/PAPER.md` records a crash-stop scope confirmed on
   2026-09-23; under crash-stop a "recovered leader" cannot occur.
-- **Lemma 3.** The proof takes a leader that accepted a request id to go on
-  to propose and have the entry agreed. A leader that is deposed without
-  crashing and later re-elected keeps its deduplication entry, while CG3(2)
-  says nothing about the proposal it made before being deposed.
+- **Lemma 3, request deduplication.** The proof takes a leader that
+  accepted a request id to go on to propose and have the entry agreed. A
+  leader that is deposed without crashing and later re-elected keeps its
+  deduplication entry, while CG3(2) says nothing about the proposal it made
+  before being deposed. `paper-mc/witness/PaperPersistentDedup.cfg` is this
+  counterexample; the repair is to scope that state to a leadership term.
+- **Lemma 3 and Theorem 2, CG3(1).** "Consensus eventually elects a
+  non-faulty leader" is not enough. In
+  `paper-mc/witness/PaperLeaderFlapping.cfg` nobody crashes and there is
+  always a leader, but two replicas alternate as leader forever; each
+  finishes its nested call after it has been replaced, so it proposes as a
+  non-leader, CG3(2) does not apply, and the request is never agreed. The
+  source shows "that remains leader" was removed from CG3(1) because it is
+  not guaranteed. Some such assumption is needed all the same: either that
+  wording, or a protocol change so that a replaced leader's response still
+  reaches consensus through the new leader.
 - **Smaller points.** The pseudocode figure omits the delivered set that
   Section 4's text says each replica keeps. The terminology paragraph says
   delivery is suppressed by "request-id deduplication", which reads as
@@ -136,52 +160,20 @@ These are observations for the authors, about the 2026-11-10 source.
 ## Suggested text for the mechanization subsection
 
 If the paper cites this repository's artifact, the subsection could read as
-follows. It uses the paper's own macros. Every number is reproduced by
-`make check` and `make check-tlaps`.
+follows. It uses the paper's own macros. Every number is reproduced by `make check`
+and `make check-tlaps`. The second paragraph depends on two changes to the
+paper that the proofs call for: CG3(1) has to say the leader remains
+leader, and Section 4 has to say request deduplication is cleared when a
+replica becomes leader.
 
 ```latex
 \subsection{Mechanization}
 \label{subsec:mechanization}
-We also specified \prot{} in TLA\textsuperscript{+}~\cite{lamport2002specifying}
-above an abstract consensus service: consensus is a single append-only
-\protoagree{agreed} log, so CG1 and CG2 hold by construction, and the
-protocol's nondeterminism (crashes, recoveries, and leader changes, a new
-leader repeating a nested call, nested calls returning arbitrary responses,
-out-of-order \protolearn{learning}, and response batching) is modeled as
-explicit actions. The specification is about 530 lines without comments,
-including the checked properties.
+We also mechanized this section in TLA\textsuperscript{+}~\cite{lamport2002specifying}. A first specification (about 190 lines without comments) models \prot{} at the level of Figure~\ref{fig:eo-pseudocode}: each replica has its own log, the \protoagree{agreed} log is unbounded, request ids are submitted over time, the leader can be replaced at any time, and replicas fail by crashing. Consensus is a box that appends proposed entries to one \protoagree{agreed} log and hands them to replicas, so CG1 and CG2 hold by construction. With the TLA\textsuperscript{+} Proof System~\cite{cousineau2012tlaproofs} we proved Lemmas~1--5 and Theorems~1 and~2 about this specification for any number of replicas, request ids, and responses, taking L1--L4 and CG3(2)--(3) as weak fairness of the corresponding actions.
 
-TLC~\cite{yu1999tlc} exhaustively checks up to twenty invariants, among them
-Theorem~1, first-commit-wins, and at-most-once \protodeliver{delivery}, on
-six configurations with three replicas (up to 717K distinct states after
-symmetry reduction). Two of them have crashes and re-election, and one of
-those reaches logs in which successive leaders had different responses
-\protoagree{agreed} for the same request id. TLC also checks Theorem~2 under
-weak fairness for three replicas and two request ids without crashes (50K
-distinct states). To check that the specification is not vacuous, we
-confirmed that TLC rejects six mutants, including \protodeliver{delivering}
-every \protoagree{agreed} entry rather than the first one for a request id,
-\protoprocess{processing} out of log order, and \protodeliver{delivering}
-before agreement.
+The proofs made two assumptions explicit, and for each TLC~\cite{yu1999tlc} finds a counterexample to Theorem~2 when it is dropped. First, the leader that CG3(1) provides must remain leader: if two replicas alternate as leader forever, each can complete its nested call only after it has been replaced, so nothing is ever \protoagree{agreed}. Second, request-deduplication state must not outlive a term as leader: a replica that accepts a request, is replaced before proposing, and is elected again would otherwise never propose it.
 
-Beyond these bounded checks, we proved both theorems with the
-TLA\textsuperscript{+} Proof System~\cite{cousineau2012tlaproofs} for
-unbounded parameters. Theorem~1 is proved as an inductive invariant, that
-every \protodeliver{delivered} response is the first \protoagree{agreed}
-entry for its request id, for any number of replicas, request ids, and
-responses, with crashes and batching enabled; the same development proves
-each of the twenty invariants that TLC checks. Theorem~2 is proved in
-crash-stop form under weak fairness of the actions that L1, L3, L4, and
-CG3(2)--(3) assume to be live: once a leader remains in place and a set of
-replicas remains up, each replica in that set eventually
-\protodeliver{delivers} a response for every request id, while leaders may
-change finitely often beforehand and the other replicas may fail forever.
-The liveness proof is for the model's bounded log, in which consensus gives
-every not-yet-\protoagree{agreed} request a slot before any retry, and for a
-fixed finite set of request ids; a crashed replica that returns keeps its
-state. The proofs comprise 4{,}242 obligations in thirteen modules, all
-discharged by the system's back-end provers. The specification, model
-configurations, and proofs are part of our artifact.
+A second specification (about 530 lines) adds the extensions of Section~\ref{sec:cyclades} (caller quorum, force-yield, and batching) and deliberate mutants, over a bounded log. TLC exhaustively checks up to twenty invariants on six configurations of it with three replicas (up to 717K distinct states after symmetry reduction), including one that reaches logs in which successive leaders had different responses \protoagree{agreed} for the same request id, and rejects six mutants. For this specification too we proved Theorem~1 and each of the twenty invariants for unbounded parameters. In total the proofs comprise 6{,}424 obligations in nineteen modules, all discharged by the proof system's back-end provers. The specifications, model configurations, and proofs are part of our artifact.
 ```
 
 It needs one new reference, to be checked against the publisher's page:
@@ -190,6 +182,6 @@ FM 2012, LNCS 7436, pages 147-154.
 
 Status of the plan in the comment block at the top of the paper's
 correctness section, for this repository: (1)-(4) and (6) are done; the
-TLAPS item is done for Theorem 1 and, in crash-stop form, for Theorem 2;
-(5), the authors' review of the specification against Section 4, is what
-this document is a first pass at.
+TLAPS item is done for Lemmas 1-5 and Theorems 1 and 2 on the paper-level
+specification; (5), the authors' review of the specifications against
+Section 4, is what this document is a first pass at.
